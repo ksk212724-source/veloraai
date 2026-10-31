@@ -5,6 +5,9 @@ BOT_TOKEN, WEBAPP_URL, POLLINATIONS_KEY, GEMINI_API_KEY, OPENROUTER_API_KEY,
 LLM_API_URL / LLM_API_KEY / LLM_MODEL, FREE_LLM_URL / FREE_LLM_MODEL,
 YOOKASSA_SHOP_ID / YOOKASSA_SECRET_KEY, FREE_LIMIT, UNLIMITED (1 = бета без лимитов),
 BETA_PASSWORD, BETA_GATE, USE_POLLING, PORT, MOCK, ALLOW_BROWSER.
+Видео без платных ключей: Pollinations (POLLINATIONS_KEY, модели POLL_VIDEO_MODELS), затем бесплатные
+Hugging Face Spaces (нужен `pip install gradio_client`; HF_TOKEN необязателен, но даёт больше GPU-квоты;
+список Spaces через HF_VIDEO_SPACES).
 Методичка нейросети лежит в persona.md и подставляется как системное сообщение.
 """
 import base64
@@ -75,6 +78,10 @@ YK_RETURN = os.getenv("YOOKASSA_RETURN_URL") or WEBAPP_URL
 YK_EMAIL = os.getenv("YOOKASSA_RECEIPT_EMAIL", "")
 
 GEN_URL = "https://gen.pollinations.ai/image/"
+VIDEO_URL = "https://gen.pollinations.ai/video/"  # у видео отдельный адрес, /image/ даёт 400
+POLL_VIDEO_MODELS = [m.strip() for m in os.getenv("POLL_VIDEO_MODELS", os.getenv("VIDEO_MODEL", "wan-fast,seedance,ltx-2")).split(",") if m.strip()]
+HF_TOKEN = os.getenv("HF_TOKEN", "")
+HF_VIDEO_SPACES = [m.strip() for m in os.getenv("HF_VIDEO_SPACES", "zerogpu-aoti/wan2-2-fp8da-aoti,Lightricks/ltx-video-distilled").split(",") if m.strip()]
 OLD_IMG_URL = "https://image.pollinations.ai/prompt/"
 STYLES = {
     "none": "",
@@ -440,11 +447,108 @@ def fetch(kind: str, prompt: str, opts: dict) -> tuple:
     return fetch_free(kind, prompt, opts)
 
 
+def _find_video_path(x):
+    """Ищет путь к видеофайлу в ответе gradio (строка, список, словарь)."""
+    if isinstance(x, str):
+        return x if x.lower().split("?")[0].endswith((".mp4", ".webm", ".mov")) else None
+    if isinstance(x, dict):
+        for k in ("video", "path", "name", "url"):
+            if k in x:
+                r = _find_video_path(x[k])
+                if r:
+                    return r
+        for v in x.values():
+            r = _find_video_path(v)
+            if r:
+                return r
+    if isinstance(x, (list, tuple)):
+        for v in x:
+            r = _find_video_path(v)
+            if r:
+                return r
+    return None
+
+
+def hf_video(prompt: str) -> tuple:
+    """Бесплатное видео из публичных Hugging Face Spaces (ZeroGPU). Качество так себе, бывают очереди."""
+    try:
+        from gradio_client import Client
+    except ImportError:
+        raise RuntimeError("нет gradio_client: pip install gradio_client")
+    errs = []
+    for space in HF_VIDEO_SPACES:
+        try:
+            try:
+                client = Client(space, token=HF_TOKEN or None, verbose=False)
+            except TypeError:  # старая версия gradio_client
+                client = Client(space, hf_token=HF_TOKEN or None, verbose=False)
+            info = client.view_api(return_format="dict", print_info=False) or {}
+            for api_name, ep in (info.get("named_endpoints") or {}).items():
+                params = ep.get("parameters") or []
+                kwargs, ok, has_prompt = {}, True, False
+                for p in params:
+                    pn = p.get("parameter_name") or p.get("label") or ""
+                    low = (pn + " " + str(p.get("label", ""))).lower()
+                    if "prompt" in low and "negative" not in low and not has_prompt:
+                        kwargs[pn] = prompt
+                        has_prompt = True
+                    elif p.get("parameter_has_default"):
+                        continue  # остальное оставляем по умолчанию
+                    else:
+                        ok = False  # обязательный параметр (например, картинка) нам нечем заполнить
+                        break
+                if not (ok and has_prompt):
+                    continue
+                out = client.submit(api_name=api_name, **kwargs).result(timeout=420)
+                path = _find_video_path(out)
+                if path and os.path.exists(path):
+                    with open(path, "rb") as f:
+                        return f.read(), "video/webm" if path.endswith(".webm") else "video/mp4"
+            errs.append(f"{space}: нет подходящего метода")
+        except Exception as e:  # noqa: BLE001
+            errs.append(f"{space}: {type(e).__name__} {str(e)[:80]}")
+            print("HF video:", space, type(e).__name__, str(e)[:300])
+    raise RuntimeError("; ".join(errs)[:300] or "нет Spaces")
+
+
+def fetch_free_video(full: str, aspect: str, dur: int) -> tuple:
+    errs, ar = [], ("9:16" if aspect == "9:16" else "16:9")
+    stop = False
+    for model in POLL_VIDEO_MODELS:
+        if stop:
+            break
+        # сначала со всеми параметрами, при 400 ещё раз только с моделью
+        for params in ({"model": model, "duration": dur, "aspectRatio": ar}, {"model": model}):
+            try:
+                q = dict(params, **({"key": POLL_KEY} if POLL_KEY else {}))
+                r = requests.get(VIDEO_URL + urllib.parse.quote(full, safe=""), params=q,
+                                 headers=auth_headers(), timeout=300)
+            except requests.RequestException as e:
+                errs.append(f"{model}: сеть {type(e).__name__}")
+                break
+            ct = r.headers.get("content-type", "").split(";")[0]
+            if r.status_code == 200 and ct.startswith("video/"):
+                return r.content, ct
+            errs.append(f"{model} {r.status_code} {r.text[:60].strip()}")
+            print("Pollinations video:", model, r.status_code, r.text[:200])
+            if r.status_code in (401, 402, 403, 429):  # ключ/лимит — другие модели не помогут
+                stop = True
+            if r.status_code != 400:
+                break
+    try:
+        return hf_video(full)
+    except Exception as e:  # noqa: BLE001
+        errs.append(f"HF: {str(e)[:120]}")
+    raise RuntimeError("видео не вышло: " + "; ".join(errs)[:180])
+
+
 def fetch_free(kind: str, prompt: str, opts: dict) -> tuple:
     style = STYLES.get(opts.get("style", "none"), "")
     full = (prompt.strip() + style)[:1500]
     aspect = opts.get("aspect", "1:1")
     seed = opts.get("seed") or int(time.time()) % 1_000_000
+    if kind == "video":
+        return fetch_free_video(full, aspect, int(opts.get("duration", 4)))
     if kind in ("image", "edit"):
         w, h = IMAGE_SIZES.get(aspect, (1024, 1024))
         params = {"model": "flux", "width": w, "height": h, "nologo": "true", "seed": seed}
