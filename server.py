@@ -51,6 +51,11 @@ LLM_MODEL = os.getenv("LLM_MODEL", "")
 GEMINI_KEY = os.getenv("GEMINI_API_KEY") or (LLM_API_KEY if "googleapis.com" in LLM_API_URL else "")
 GEMINI_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-2.5-flash-image")
 
+# Голос: распознавание через Cloudflare Workers AI (Whisper), озвучка через edge-tts
+CF_ACCOUNT = os.getenv("CF_ACCOUNT_ID", "")
+CF_TOKEN = os.getenv("CF_API_TOKEN", "")
+TTS_VOICE = os.getenv("TTS_VOICE", "ru-RU-SvetlanaNeural")  # мужской: ru-RU-DmitryNeural
+
 FREE_LLM_URL = os.getenv("FREE_LLM_URL", "https://gen.pollinations.ai/v1/chat/completions")
 FREE_LLM_MODEL = os.getenv("FREE_LLM_MODEL", "openai")
 PERSONA = (BASE / "persona.md").read_text(encoding="utf-8") if (BASE / "persona.md").exists() \
@@ -546,35 +551,83 @@ def mock_reply(last: str, photo=False) -> str:
     return "Я здесь. Расскажи, что хочешь создать, или просто поговорим."
 
 
+def stt_cloudflare(audio_b64: str) -> str:
+    r = requests.post(
+        f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT}/ai/run/@cf/openai/whisper-large-v3-turbo",
+        headers={"Authorization": f"Bearer {CF_TOKEN}", "Content-Type": "application/json"},
+        json={"audio": audio_b64, "language": "ru"}, timeout=60)
+    if r.status_code != 200:
+        raise RuntimeError(f"Cloudflare код {r.status_code}: {r.text[:200]}")
+    return ((r.json().get("result") or {}).get("text") or "").strip()
+
+
+def stt_gemini(audio_b64: str, mime: str) -> str:
+    model = os.getenv("GEMINI_STT_MODEL", "gemini-2.5-flash")
+    r = requests.post(
+        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+        headers={"Content-Type": "application/json", "x-goog-api-key": GEMINI_KEY},
+        json={"contents": [{"parts": [
+            {"text": "Дословно запиши речь из аудио на том языке, на котором она звучит. "
+                     "Верни только текст. Если речи нет, верни пустую строку."},
+            {"inline_data": {"mime_type": mime, "data": audio_b64}}]}]}, timeout=60)
+    if r.status_code != 200:
+        raise RuntimeError(f"Google код {r.status_code}: {r.text[:200]}")
+    parts = (r.json().get("candidates") or [{}])[0].get("content", {}).get("parts") or []
+    return "".join(p.get("text", "") for p in parts).strip()
+
+
 @app.post("/api/stt")
 def stt():
-    """Голос в текст для режима разговора (нужен GEMINI_API_KEY)."""
+    """Голос в текст для режима разговора: Cloudflare Whisper (русский), запасной вариант Google."""
     check_access()
     rate_limit("stt:" + request.headers.get("X-Forwarded-For", request.remote_addr or "x"), limit=60)
     body = request.get_json(silent=True) or {}
     audio = body.get("audio") or ""
     mime = (body.get("mime") or "audio/webm").split(";")[0]
-    if not GEMINI_KEY:
-        return jsonify(error="Для голоса нужен ключ Google: добавьте GEMINI_API_KEY"), 503
+    if not (CF_ACCOUNT and CF_TOKEN) and not GEMINI_KEY:
+        return jsonify(error="Для голоса добавьте CF_ACCOUNT_ID и CF_API_TOKEN"), 503
     if not audio or len(audio) > 6_000_000:
         return jsonify(error="Запись слишком длинная или пустая"), 400
+    attempts = []
+    if CF_ACCOUNT and CF_TOKEN:
+        attempts.append(("Cloudflare", lambda: stt_cloudflare(audio)))
+    if GEMINI_KEY:
+        attempts.append(("Google", lambda: stt_gemini(audio, mime)))
+    for name, fn in attempts:
+        try:
+            return jsonify(text=fn())
+        except Exception as e:  # noqa: BLE001
+            print("STT", name, type(e).__name__, str(e)[:300])
+    return jsonify(error="Не удалось распознать речь"), 502
+
+
+@app.post("/api/tts")
+def tts():
+    """Текст в голос (русский) через edge-tts. Возвращает mp3."""
+    check_access()
+    rate_limit("tts:" + request.headers.get("X-Forwarded-For", request.remote_addr or "x"), limit=200)
+    text = re.sub(r"[*_`#>\[\]]", "", str((request.get_json(silent=True) or {}).get("text", ""))).strip()[:1500]
+    if not text:
+        return jsonify(error="Пустой текст"), 400
+    voice = TTS_VOICE if re.search(r"[а-яё]", text, re.I) else os.getenv("TTS_VOICE_EN", "en-US-AriaNeural")
     try:
-        model = os.getenv("GEMINI_STT_MODEL", "gemini-2.5-flash")
-        r = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-            headers={"Content-Type": "application/json", "x-goog-api-key": GEMINI_KEY},
-            json={"contents": [{"parts": [
-                {"text": "Дословно запиши речь из аудио на том языке, на котором она звучит. "
-                         "Верни только текст. Если речи нет, верни пустую строку."},
-                {"inline_data": {"mime_type": mime, "data": audio}}]}]}, timeout=60)
-        if r.status_code != 200:
-            print("STT", r.status_code, r.text[:300])
-            return jsonify(error=f"Не удалось распознать речь (Google код {r.status_code})"), 502
-        parts = (r.json().get("candidates") or [{}])[0].get("content", {}).get("parts") or []
-        return jsonify(text="".join(p.get("text", "") for p in parts).strip())
+        import asyncio
+        import edge_tts
+
+        async def run():
+            out = b""
+            async for ch in edge_tts.Communicate(text, voice).stream():
+                if ch["type"] == "audio":
+                    out += ch["data"]
+            return out
+
+        data = asyncio.run(run())
+        if not data:
+            raise RuntimeError("пустой звук")
+        return app.response_class(data, mimetype="audio/mpeg")
     except Exception as e:  # noqa: BLE001
-        print("STT", type(e).__name__, str(e)[:200])
-        return jsonify(error="Не удалось распознать речь"), 502
+        print("TTS", type(e).__name__, str(e)[:200])
+        return jsonify(error="Озвучка недоступна"), 502
 
 
 @app.post("/api/chat")
