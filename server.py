@@ -33,6 +33,7 @@ import subprocess
 import threading
 import time
 import urllib.parse
+import secrets
 import uuid
 from pathlib import Path
 import requests
@@ -55,6 +56,9 @@ OR_VIDEO_MODEL = os.getenv("OR_VIDEO_MODEL", "google/veo-3.1-fast")
 LLM_API_URL = os.getenv("LLM_API_URL", "")
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 LLM_MODEL = os.getenv("LLM_MODEL", "")
+# Google Gemini: картинки (Nano Banana). Ключ берём из GEMINI_API_KEY, а если его нет, то из
+GEMINI_KEY = os.getenv("GEMINI_API_KEY") or (LLM_API_KEY if "googleapis.com" in LLM_API_URL e
+GEMINI_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-2.5-flash-image")
 FREE_LLM_URL = os.getenv("FREE_LLM_URL", "https://gen.pollinations.ai/v1/chat/completions")
 FREE_LLM_MODEL = os.getenv("FREE_LLM_MODEL", "openai")
 PERSONA = (BASE / "persona.md").read_text(encoding="utf-8") if (BASE / "persona.md").exists()
@@ -93,6 +97,10 @@ except sqlite3.OperationalError:
 pass
 jobs: dict[str, dict] = {}
 hits: dict[str, list] = {}
+sessions: dict[str, tuple] = {} # sid -> (uid, до какого времени): вход по паролю живёт толь
+SESSION_TTL = int(os.getenv("SESSION_TTL", str(6 * 3600)))
+APP_MSG_TTL = int(os.getenv("APP_MSG_TTL", "45")) # через сколько секунд бот удаляет сообщен
+open_msgs: dict[int, list] = {}
 lock = threading.Lock()
 # ---------- защита ----------
 def valid_init_data(raw: str) -> bool:
@@ -115,11 +123,15 @@ def add_beta(u: str):
 with lock:
 db.execute("insert or ignore into beta(uid) values(?)", (u,))
 db.commit()
-def check_access():
+def check_access(gate=True):
 if ALLOW_BROWSER:
 return
 if not BOT_TOKEN or not valid_init_data(request.headers.get("X-Init-Data", "")):
 abort(403)
+if gate and BETA_GATE: # при каждом открытии мини-приложения пароль вводится заново
+s = sessions.get(request.headers.get("X-Sess", ""))
+if not s or s[1] < time.time() or s[0] != uid():
+abort(401)
 def rate_limit(key: str, limit=20, per=3600):
 now = time.time()
 with lock:
@@ -138,8 +150,8 @@ try:
 return "tg:" + str(json.loads(dict(urllib.parse.parse_qsl(raw)).get("user", "{}"))["i
 except Exception:
 abort(403)
-момент
 def row(u: str):
+момент
 with lock:
 db.execute("insert or ignore into users(uid) values(?)", (u,))
 db.commit()
@@ -193,8 +205,45 @@ with lock:
 db.execute("update pays set status='canceled' where id=?", (pid,))
 db.commit()
 # ---------- нейросеть чата ----------
+def gemini_chat(msgs, system, max_tokens) -> str:
+"""Чат напрямую через Google (родной формат, как в curl из AI Studio): работает и с ключа
+model = LLM_MODEL if "gemini" in LLM_MODEL else "gemini-2.5-flash"
+contents = []
+for m in msgs:
+c = m.get("content")
+parts = [{"text": c}] if isinstance(c, str) else []
+if not isinstance(c, str):
+for it in c or []:
+if it.get("type") == "text":
+parts.append({"text": it.get("text", "")})
+elif it.get("type") == "image_url":
+u = (it.get("image_url") or {}).get("url", "")
+if u.startswith("data:") and "," in u:
+head, b64 = u.split(",", 1)
+parts.append({"inline_data": {"mime_type": head[5:].split(";")[0] or
+if parts:
+contents.append({"role": "model" if m.get("role") == "assistant" else "user", "pa
+gen = {"temperature": 0.8, "maxOutputTokens": max(max_tokens, 400)}
+if "flash" in model:
+gen["thinkingConfig"] = {"thinkingBudget": 0}
+r = requests.post(
+f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+headers={"Content-Type": "application/json", "x-goog-api-key": GEMINI_KEY}, timeout=9
+json={"systemInstruction": {"parts": [{"text": system}]}, "contents": contents, "gene
+if r.status_code != 200:
+raise RuntimeError(f"Google код {r.status_code}: {r.text[:200]}")
+cand = (r.json().get("candidates") or [{}])[0]
+txt = "".join(p.get("text", "") for p in (cand.get("content") or {}).get("parts") or []).
+if not txt:
+raise RuntimeError("Google вернул пустой ответ")
+return txt
 def ask_llm(msgs, system=None, max_tokens=700) -> str:
-"""Сначала ваш API (если задан), затем бесплатный Pollinations. Понимает картинки (image_
+"""Сначала Google напрямую (если есть ключ), затем ваш API, затем бесплатный Pollinations
+if GEMINI_KEY:
+try:
+return gemini_chat(msgs, system or PERSONA, max_tokens)
+except Exception as e: # noqa: BLE001
+print("LLM Google:", type(e).__name__, str(e)[:300])
 providers = []
 if OR_KEY:
 providers.append((OR_BASE + "/chat/completions", OR_KEY, OR_CHAT_MODEL))
@@ -223,13 +272,13 @@ m["content"] = [{"type": "text", "text": sysmsg + "\n\n---\n\n"}]
 break
 r = call(folded)
 if r.status_code != 200:
+system
 print("LLM", url.split("/")[2], r.status_code, r.text[:300])
 last = f"{url.split('/')[2]} код {r.status_code}"
 continue
 txt = (r.json()["choices"][0]["message"]["content"] or "").strip()
 if txt:
 return txt
-system
 except Exception as e: # noqa: BLE001
 print("LLM", url.split("/")[2], type(e).__name__, str(e)[:200])
 last = f"{url.split('/')[2]} {type(e).__name__}"
@@ -293,7 +342,35 @@ return v.content, "video/mp4"
 if st in ("failed", "cancelled", "expired"):
 raise RuntimeError("видео не получилось: " + str(j.get("error", st))[:120])
 raise RuntimeError("видео делается слишком долго")
+def google_image(prompt: str, aspect: str, src_url: str = "") -> tuple[bytes, str]:
+"""Картинка через Google Gemini (Nano Banana). Правка: исходник читаем из папки media."""
+parts = [{"text": prompt}]
+if src_url:
+f = MEDIA / Path(urllib.parse.urlparse(src_url).path).name
+parts.append({"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(f.r
+gen = {"responseModalities": ["IMAGE"]}
+if not src_url and aspect in ("1:1", "3:4", "16:9", "9:16"):
+gen["imageConfig"] = {"aspectRatio": aspect}
+r = requests.post(
+f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_IMAGE_MODEL}:genera
+headers={"Content-Type": "application/json", "x-goog-api-key": GEMINI_KEY},
+json={"contents": [{"parts": parts}], "generationConfig": gen}, timeout=120)
+if r.status_code != 200:
+raise RuntimeError(f"Google код {r.status_code}: {r.text[:200]}")
+for c in r.json().get("candidates") or []:
+for pt in (c.get("content") or {}).get("parts") or []:
+d = pt.get("inlineData") or pt.get("inline_data")
+if d and d.get("data"):
+return base64.b64decode(d["data"]), d.get("mimeType") or d.get("mime_type") o
+raise RuntimeError("Google не вернул картинку: " + r.text[:200])
 def fetch(kind: str, prompt: str, opts: dict) -> tuple[bytes, str]:
+if GEMINI_KEY and not MOCK and kind in ("image", "edit"): # сначала Google, при любой ош
+try:
+style = STYLES.get(opts.get("style", "none"), "")
+full = prompt.strip()[:1500] if kind == "edit" else (prompt.strip() + style)[:150
+return google_image(full, opts.get("aspect", "1:1"), opts.get("src", "") if kind
+except Exception as e: # noqa: BLE001
+print("Google image:", type(e).__name__, str(e)[:300])
 if OR_KEY and not MOCK: # сначала OpenRouter, при ошибке падаем на бесплатный Pollinatio
 try:
 style = STYLES.get(opts.get("style", "none"), "")
@@ -387,11 +464,11 @@ jobs[jid] = {"status": "working", "t": time.time()}
 opts = {k: body.get(k) for k in ("style", "aspect", "duration", "seed")}
 if raw_img:
 sname = f"src_{jid}.jpg"
-по ход
 (MEDIA / sname).write_bytes(raw_img)
 opts["src"] = (WEBAPP_URL or request.host_url.rstrip("/")) + "/media/" + sname
 threading.Thread(target=run_job, args=(jid, kind, prompt, opts), daemon=True).start()
 return jsonify(id=jid)
+по ход
 def mock_reply(last: str, photo=False) -> str:
 low = last.lower()
 if photo:
@@ -405,13 +482,40 @@ return ("Сделаю медленный кадр, пока поднимаетс
 return "Я Velora, ИИ-помощница этой студии. Разговариваю, придумываю идеи и рисую фот
 return "Я здесь. Расскажи, что хочешь создать, или просто поговорим."
 painte
-"x"),
-str)][
+@app.post("/api/stt")
+def stt():
+"""Голос в текст для режима разговора: бесплатно через Google Gemini (нужен GEMINI_API_KE
+check_access()
+rate_limit("stt:" + request.headers.get("X-Forwarded-For", request.remote_addr or "x"), l
+body = request.get_json(silent=True) or {}
+audio = body.get("audio") or ""
+mime = (body.get("mime") or "audio/webm").split(";")[0]
+if not GEMINI_KEY:
+return jsonify(error="Для голоса нужен ключ Google: добавьте GEMINI_API_KEY"), if not audio or len(audio) > 6_000_000:
+return jsonify(error="Запись слишком длинная или пустая"), 400
+503
+try:
+r = requests.post(
+f"https://generativelanguage.googleapis.com/v1beta/models/{os.getenv('GEMINI_STT_
+headers={"Content-Type": "application/json", "x-goog-api-key": GEMINI_KEY},
+json={"contents": [{"parts": [
+{"text": "Дословно запиши речь из аудио на том языке, на котором она звучит.
+{"inline_data": {"mime_type": mime, "data": audio}}]}]}, timeout=60)
+if r.status_code != 200:
+print("STT", r.status_code, r.text[:300])
+return jsonify(error=f"Не удалось распознать речь (Google код {r.status_code})"),
+parts = (r.json().get("candidates") or [{}])[0].get("content", {}).get("parts") or []
+return jsonify(text="".join(p.get("text", "") for p in parts).strip())
+except Exception as e: # noqa: BLE001
+print("STT", type(e).__name__, str(e)[:200])
+return jsonify(error="Не удалось распознать речь"), 502
 @app.post("/api/chat")
 def chat():
 check_access()
 rate_limit("chat:" + request.headers.get("X-Forwarded-For", request.remote_addr or body = request.get_json(silent=True) or {}
 msgs = [m for m in (body.get("messages") or [])
+"x"),
+str)][
 if m.get("role") in ("user", "assistant") and isinstance(m.get("content"), if not msgs or msgs[-1]["role"] != "user":
 return jsonify(error="Пустое сообщение"), 400
 msgs = [{"role": m["role"], "content": m["content"][:2000]} for m in msgs]
@@ -440,6 +544,23 @@ system = PERSONA + ("\n\nПожелания пользователя (учиты
 return done(ask_llm(msgs, system=system))
 except Exception as e: # noqa: BLE001
 return jsonify(error=f"Нейросеть не ответила ({e})"), 502
+@app.post("/api/unlock")
+def unlock():
+check_access(gate=False)
+if not BETA_GATE:
+return jsonify(sid="open")
+u = uid()
+rate_limit("unlock:" + u, limit=8, per=600)
+pw = str((request.get_json(silent=True) or {}).get("password", ""))
+if not hmac.compare_digest(pw.encode(), BETA_PASSWORD.encode()):
+return jsonify(error="Неверный пароль"), 401
+now = time.time()
+with lock:
+for k in [k for k, v in sessions.items() if v[1] < now]:
+sessions.pop(k, None)
+sid = secrets.token_urlsafe(24)
+sessions[sid] = (u, now + SESSION_TTL)
+return jsonify(sid=sid)
 @app.get("/api/me")
 def me():
 check_access()
@@ -518,9 +639,9 @@ def health():
 return "ok"
 @app.post("/api/send")
 def send_to_chat():
+"""Кнопка «Сохранить»: бот присылает фото/видео в личный чат (в Telegram это надёжнее, че
 check_access()
 u = uid()
-"""Кнопка «Сохранить»: бот присылает фото/видео в личный чат (в Telegram это надёжнее, че
 if not u.startswith("tg:") or not BOT_TOKEN:
 return jsonify(error="Доступно только внутри Telegram"), 400
 rate_limit("send:" + u, limit=30)
@@ -581,11 +702,21 @@ cmd, _, arg = text.partition(" ")
 cmd = cmd.split("@")[0].lower() if cmd.startswith("/") else ""
 arg = arg.strip() if cmd else text
 def say(t, **kw):
-tg("sendMessage", chat_id=chat_id, text=(t or "…")[:4000], **kw)
+res = tg("sendMessage", chat_id=chat_id, text=(t or "…")[:4000], **kw)
+if "web_app" in json.dumps(kw.get("reply_markup") or {}): # сообщение с кнопкой мини
+mid = ((res or {}).get("result") or {}).get("message_id")
+if mid:
+open_msgs.setdefault(chat_id, []).append(mid)
+threading.Timer(APP_MSG_TTL, lambda: tg("deleteMessage", chat_id=chat_id, mes
 def need_pay():
 say("Бесплатные запросы закончились. Они обновятся через 3 часа, а подписка в Velora
 reply_markup=app_button())
 try:
+for mid in open_msgs.pop(chat_id, []): # прошлые кнопки открытия убираем сразу
+try:
+tg("deleteMessage", chat_id=chat_id, message_id=mid)
+except Exception: # noqa: BLE001
+pass
 if not is_beta(who): # закрытый бета-тест: ссылка выдаётся только после пароля
 if text == BETA_PASSWORD:
 add_beta(who)
@@ -620,9 +751,9 @@ name = f"src_{uuid.uuid4().hex[:12]}.jpg"
 (MEDIA / name).write_bytes(raw)
 send_media(chat_id, "edit", arg[:600], {"src": f"{WEBAPP_URL}/media/{name}"})
 return
+timeou
 q = (arg or "Что на фото? Опиши подробно и по делу.")[:2000]
 durl = "data:image/jpeg;base64," + base64.b64encode(raw).decode()
-timeou
 reply = ask_llm([{"role": "user", "content": [{"type": "text", "text": q},
 {"type": "image_url", "image_url":
 say(strip_tags(reply))
