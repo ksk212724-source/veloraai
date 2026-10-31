@@ -885,17 +885,6 @@ def handle_update(u: dict):
                 tg("deleteMessage", chat_id=chat_id, message_id=mid)
             except Exception:  # noqa: BLE001
                 pass
-        if not is_beta(who):  # закрытый бета-тест: ссылка выдаётся только после пароля
-            if text == BETA_PASSWORD:
-                add_beta(who)
-                tg("deleteMessage", chat_id=chat_id, message_id=msg.get("message_id"))
-                say("Пароль принят, добро пожаловать в бета-тест Velora!\nНажмите кнопку ниже.",
-                    reply_markup=app_button())
-            elif cmd == "/start":
-                say("Velora сейчас в закрытом бета-тесте.\nВведите пароль, чтобы получить доступ.")
-            else:
-                say("Неверный пароль. Попробуйте ещё раз.")
-            return
         if cmd in ("/start", "/help"):
             say(HELP, reply_markup=app_button())
             return
@@ -981,11 +970,9 @@ def tg_hook(secret):
 
 
 def setup_bot():
-    if BETA_GATE:  # без пароля ссылки быть не должно, поэтому кнопка меню обычная
-        tg("setChatMenuButton", menu_button={"type": "default"})
-    else:
-        tg("setChatMenuButton", menu_button={"type": "web_app", "text": "Velora",
-                                             "web_app": {"url": WEBAPP_URL}})
+    # бот открыт для всех, пароль спрашивает само мини-приложение (/api/unlock)
+    tg("setChatMenuButton", menu_button={"type": "web_app", "text": "Velora",
+                                         "web_app": {"url": WEBAPP_URL}})
     tg("setMyCommands", commands=[
         {"command": "img", "description": "Нарисовать фото: /img описание"},
         {"command": "video", "description": "Снять видео: /video описание"},
