@@ -422,7 +422,7 @@ function mtools(d,text){const w=document.createElement('div');w.className='mtool
   const ic=p=>`<svg class="ic" viewBox="0 0 24 24" style="width:16px;height:16px">${p}</svg>`;
   w.innerHTML=`<button class="gl rb sm" data-t="copy" aria-label="Копировать">${ic('<rect x="9" y="9" width="11" height="11" rx="3"/><path d="M5 15V6a2 2 0 012-2h9"/>')}</button>`+('speechSynthesis' in window?`<button class="gl rb sm" data-t="say" aria-label="Озвучить">${ic('<path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5z"/><path d="M15.5 9a4 4 0 010 6"/>')}</button>`:'');
   w.querySelector('[data-t=copy]').onclick=async()=>{haptic('soft');try{await navigator.clipboard.writeText(text)}catch(e){const a=document.createElement('textarea');a.value=text;document.body.appendChild(a);a.select();try{document.execCommand('copy')}catch(_){}a.remove()}toast('Скопировано')};
-  const sb=w.querySelector('[data-t=say]');if(sb)sb.onclick=()=>{haptic('soft');const ss=speechSynthesis;if(ss.speaking){ss.cancel();return}const q=new SpeechSynthesisUtterance(text);q.lang=/[а-яё]/i.test(text)?'ru-RU':'en-US';ss.speak(q)};
+  const sb=w.querySelector('[data-t=say]');if(sb)sb.onclick=()=>{haptic('soft');if(curAudio||(window.speechSynthesis&&speechSynthesis.speaking)){stopSpeak();return}speakText(text)};
   d.querySelector('.txt').after(w)}
 function show(el){dropHello();col.appendChild(el);scrollDown()}
 function updateTitle(){const c=chat(),t=$('#title');t.classList.add('swap');
@@ -600,7 +600,15 @@ function profileText(){const L={short:'Отвечай очень коротко,
   F={free:'',list:'Оформляй ответ короткими списками.',steps:'Объясняй по шагам.'}[P.fmt],
   E={off:'Не используй эмодзи.',few:'',lots:'Добавляй побольше эмодзи.'}[P.emoji];
   return [P.name&&('Пользователя зовут '+P.name+'.'),P.about&&('О пользователе и его пожелания: '+P.about),L,T,G,R,C,F,E].filter(Boolean).join(' ').slice(0,900)}
-function speakText(t,cb){if(!('speechSynthesis' in window)){cb&&cb();return}try{speechSynthesis.cancel();t=t.replace(/[*_`#>\[\]]/g,'');const q=new SpeechSynthesisUtterance(t);q.lang=/[а-яё]/i.test(t)?'ru-RU':'en-US';q.rate=+P.vrate||1;if(cb)q.onend=q.onerror=()=>cb();speechSynthesis.speak(q)}catch(e){cb&&cb()}}
+let curAudio=null;
+function stopSpeak(){try{speechSynthesis.cancel()}catch(e){}if(curAudio){try{curAudio.onended=curAudio.onerror=null;curAudio.pause()}catch(e){}curAudio=null}}
+function browserSpeak(t,cb){if(!('speechSynthesis' in window)){cb&&cb();return}try{const q=new SpeechSynthesisUtterance(t);const ru=/[а-яё]/i.test(t);q.lang=ru?'ru-RU':'en-US';
+  const v=speechSynthesis.getVoices().find(x=>x.lang&&x.lang.toLowerCase().startsWith(ru?'ru':'en'));if(v)q.voice=v;q.rate=+P.vrate||1;if(cb)q.onend=q.onerror=()=>cb();speechSynthesis.speak(q)}catch(e){cb&&cb()}}
+async function speakText(t,cb){stopSpeak();t=t.replace(/[*_`#>\[\]]/g,'').trim();if(!t){cb&&cb();return}
+  try{const r=await fetch(API_BASE+'/api/tts',{method:'POST',headers:headers(),body:JSON.stringify({text:t})});if(!r.ok)throw 0;
+    const url=URL.createObjectURL(await r.blob());const a=new Audio(url);a.playbackRate=+P.vrate||1;curAudio=a;
+    const end=()=>{URL.revokeObjectURL(url);if(curAudio===a)curAudio=null;cb&&cb()};a.onended=end;a.onerror=()=>{URL.revokeObjectURL(url);curAudio=null;browserSpeak(t,cb)};
+    await a.play()}catch(e){curAudio=null;browserSpeak(t,cb)}}
 function applyPrefs(){root.style.setProperty('--fs',P.fs);root.classList.toggle('calm',!!P.calm);
   S.style=P.dstyle;S.aspect.image=P.dasp;S.aspect.video=P.dvasp;S.dur=+P.ddur||4;
   const st=STY.find(x=>x[0]===S.style);$('#styVal').textContent=st?st[1]:'Без стиля';$('#durVal').textContent=S.dur+' с';$('#fmtVal').textContent=S.aspect[S.mode]||'';updateProf()}
@@ -710,7 +718,7 @@ function vmState(k,t){try{MC.g(k==='idle'?'idle':k)}catch(e){}$('#orb').classNam
 async function vmOpen(){if(!navigator.mediaDevices||!window.MediaRecorder){toast('Микрофон недоступен здесь');return}
   try{vm.stream=await navigator.mediaDevices.getUserMedia({audio:true})}catch(e){toast('Разрешите доступ к микрофону');return}
   vm.on=true;$('#orb').insertAdjacentHTML('beforeend','<div class="mc mcH" data-g="1"></div>');$('#vm').classList.add('on');haptic('medium');vmListen()}
-function vmClose(){vm.on=false;vm.gen++;try{speechSynthesis.cancel()}catch(e){}if(vm.stream){vm.stream.getTracks().forEach(t=>t.stop());vm.stream=null}$('#vm').classList.remove('on');document.querySelectorAll('#orb .mc').forEach(e=>e.remove());try{MC.setBase(S.busy?'dance':'idle')}catch(e){}}
+function vmClose(){vm.on=false;vm.gen++;stopSpeak();if(vm.stream){vm.stream.getTracks().forEach(t=>t.stop());vm.stream=null}$('#vm').classList.remove('on');document.querySelectorAll('#orb .mc').forEach(e=>e.remove());try{MC.setBase(S.busy?'dance':'idle')}catch(e){}}
 function vmNext(){vm.spoke=false;if(vm.on)setTimeout(vmListen,250)}
 function vmListen(){if(!vm.on||!vm.stream)return;const my=++vm.gen;vmState('listen');
   const mt=['audio/webm;codecs=opus','audio/mp4','audio/webm'].find(t=>MediaRecorder.isTypeSupported(t))||'';
@@ -735,7 +743,7 @@ function vmListen(){if(!vm.on||!vm.stream)return;const my=++vm.gen;vmState('list
     const el=Date.now()-t0;if((heard&&quiet>42)||el>25000||(!heard&&el>9000)){try{rec.stop()}catch(e){}return}
     requestAnimationFrame(tick)};tick()}
 $('#vmB').onclick=vmOpen;$('#vmX').onclick=vmClose;
-$('#orb').onclick=()=>{haptic('soft');if(!vm.on)return;try{speechSynthesis.cancel()}catch(e){}vm.gen++;vm.spoke=false;vmListen()};
+$('#orb').onclick=()=>{haptic('soft');if(!vm.on)return;stopSpeak();vm.gen++;vm.spoke=false;vmListen()};
 
 /* касания как в iOS: жидкое стекло набухает под пальцем и пружинит обратно */
 (()=>{const SEL='button,.row,.stats div,.list>*,.sugg button,.chip,.seg button',cap=(e)=>e.closest&&e.closest(SEL);let cur=null,r=null;
