@@ -410,6 +410,13 @@ html.dr .app{transform:translateX(var(--dw)) scale(.97);border-radius:46px;box-s
 .pja{display:flex;gap:8px;flex-wrap:wrap}.pjb{padding:9px 15px;border-radius:99px;font-size:13px;background:rgba(255,255,255,.1);border:1px solid var(--line)}.pjb.pri{background:#fff;color:#0b0b0d;border-color:#fff}.pjb.dg{color:#ff9d93}
 .pjn{padding:14px;border-radius:24px;display:grid;gap:10px;border:1px dashed rgba(255,255,255,.22)}.pjn>b{font-size:14px}
 </style>
+<style>
+.cbh{flex-wrap:wrap;row-gap:6px}.cbl small{display:none}
+.cb.hasv .cba{order:3;width:100%;justify-content:space-between;padding-top:4px;border-top:1px solid rgba(255,255,255,.07)}
+.cb .cba button{width:34px;height:30px;display:grid;place-items:center}
+.cb.hasv .cbt{margin-left:auto}
+.hv,.cbv{min-width:0}.hv iframe{display:block;max-width:100%}
+</style>
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -807,8 +814,8 @@ setTimeout(()=>{const b=document.querySelector('.hello .mc');if(b){const r=b.get
 /* ---------- фото на распознавание ---------- */
 const file=document.createElement('input');file.type='file';file.accept='image/*';
 function setImg(v){S.img=v;$('#att').hidden=!v;if(v)$('#attI').src=v.thumb;sendState();quickShow()}
-function shrink(src,max,q){return new Promise(ok=>{const im=new Image();im.onload=()=>{const k=Math.min(1,max/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=im.width*k;c.height=im.height*k;c.getContext('2d').drawImage(im,0,0,c.width,c.height);ok(c.toDataURL('image/jpeg',q))};im.src=src})}
-function takeFile(f){if(!f)return;const r=new FileReader();r.onload=async()=>{setImg({full:await shrink(r.result,1280,.82),thumb:await shrink(r.result,220,.7)});haptic('soft')};r.readAsDataURL(f)}
+function shrink(src,max,q){return new Promise(ok=>{const im=new Image();im.onload=()=>{const k=Math.min(1,max/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=im.width*k;c.height=im.height*k;{const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);x.imageSmoothingQuality='high';x.drawImage(im,0,0,c.width,c.height)}ok(c.toDataURL('image/jpeg',q))};im.src=src})}
+function takeFile(f){if(!f)return;const r=new FileReader();r.onload=async()=>{setImg({full:await shrink(r.result,2560,.94),thumb:await shrink(r.result,220,.7)});haptic('soft')};r.readAsDataURL(f)}
 file.onchange=()=>{const f=file.files[0];file.value='';takeFile(f)};
 /* запасной вариант камеры: системное приложение камеры (работает везде, где есть input capture) */
 const shot=document.createElement('input');shot.type='file';shot.accept='image/*';shot.setAttribute('capture','environment');
@@ -825,9 +832,9 @@ async function openCamera(){haptic('soft');
   if(!await camStart()){camClose();shot.click()}}
 $('#camX').onclick=camClose;
 $('#flip').onclick=async()=>{camFace=camFace==='user'?'environment':'user';haptic('soft');if(!await camStart()){camFace=camFace==='user'?'environment':'user';await camStart()}};
-$('#shutter').onclick=async()=>{if(!camV.videoWidth)return;const c=document.createElement('canvas'),k=Math.min(1,1600/Math.max(camV.videoWidth,camV.videoHeight));
+$('#shutter').onclick=async()=>{if(!camV.videoWidth)return;const c=document.createElement('canvas'),k=Math.min(1,3000/Math.max(camV.videoWidth,camV.videoHeight));
   c.width=camV.videoWidth*k;c.height=camV.videoHeight*k;const x=c.getContext('2d');if(camFace==='user'){x.translate(c.width,0);x.scale(-1,1)}x.drawImage(camV,0,0,c.width,c.height);
-  const du=c.toDataURL('image/jpeg',.9);haptic('medium');snd('success');camClose();setImg({full:await shrink(du,1280,.82),thumb:await shrink(du,220,.7)})};
+  const du=c.toDataURL('image/jpeg',.9);haptic('medium');snd('success');camClose();setImg({full:await shrink(du,2560,.94),thumb:await shrink(du,220,.7)})};
 document.addEventListener('visibilitychange',()=>{if(document.hidden&&!cam.hidden)camClose()});
 /* быстрые действия над фото */
 const QUICK=[['Что на фото','Что на фото? Опиши подробно.'],['Прочитать текст','Прочитай весь текст с фото и выпиши его.'],['Перевести','Найди текст на фото и переведи на русский.'],['Решить задачу','Реши задачу с фото и объясни по шагам.'],['Рецепт','Что можно приготовить из продуктов на фото? Дай рецепт.'],['В промпт','Опиши фото одним подробным промптом на английском, чтобы нарисовать похожее.']];
@@ -835,7 +842,7 @@ const qk=$('#quick');QUICK.forEach(([l,q])=>{const b=document.createElement('but
 function quickShow(){qk.hidden=!(S.img&&S.mode==='chat')}
 /* результат -> снова в правку */
 async function useAsSource(u){haptic('medium');try{const bl=await (await fetch(u)).blob();const du=await new Promise((ok,no)=>{const r=new FileReader();r.onload=()=>ok(r.result);r.onerror=no;r.readAsDataURL(bl)});
-  setImg({full:await shrink(du,1280,.82),thumb:await shrink(du,220,.7)});setMode('edit');inp.focus()}catch(e){toast('Не удалось взять картинку для правки')}}
+  setImg({full:await shrink(du,2560,.94),thumb:await shrink(du,220,.7)});setMode('edit');inp.focus()}catch(e){toast('Не удалось взять картинку для правки')}}
 $('#attX').onclick=()=>{setImg(null);haptic('soft')};
 function sndLabel(){$('#sndB').innerHTML='<svg class="ic" viewBox="0 0 24 24"><path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5z"/>'+(soundOn?'<path d="M15.5 9a4 4 0 010 6"/>':'<path d="M16 9.5l4 5M20 9.5l-4 5"/>')+'</svg>'+(soundOn?'Звук включён':'Звук выключен')}
 $('#sndB').onclick=()=>{soundOn=!soundOn;try{localStorage.setItem('velora_snd',soundOn?'1':'0')}catch(e){}sndLabel();if(soundOn)snd('open')};sndLabel();
@@ -1043,9 +1050,9 @@ function vmNext(){vm.spoke=false;if(vm.on)setTimeout(vmListen,250)}
 function vmListen(){if(!vm.on||!vm.stream)return;const my=++vm.gen;vmState('listen');
   const mt=['audio/webm;codecs=opus','audio/mp4','audio/webm'].find(t=>MediaRecorder.isTypeSupported(t))||'';
   const rec=new MediaRecorder(vm.stream,mt?{mimeType:mt}:{}),ch=[];rec.ondataavailable=e=>e.data.size&&ch.push(e.data);
-  const AC=window.AudioContext||window.webkitAudioContext,ac=new AC(),an=ac.createAnalyser();an.fftSize=512;ac.createMediaStreamSource(vm.stream).connect(an);const buf=new Uint8Array(an.fftSize);
+  const ac=window.vmAC(),an=window.vmAN();const buf=new Uint8Array(an.fftSize);
   let heard=false,quiet=0,t0=Date.now(),stop=false,fl=0,nf=0,sp=0,vs=0;
-  const fin=async()=>{stop=true;ac.close().catch(()=>{});if(my!==vm.gen)return;
+  const fin=async()=>{stop=true;if(my!==vm.gen)return;
     if(!heard){if(vm.on)vmListen();return}
     vmState('think');const blob=new Blob(ch,{type:rec.mimeType||'audio/webm'});
     const b64=await new Promise(ok=>{const f=new FileReader();f.onload=()=>ok(String(f.result).split(',')[1]);f.readAsDataURL(blob)});
@@ -1509,7 +1516,7 @@ var _tf=window.takeFile;window.takeFile=function(f){if(!f)return;
   if(f.size>25*1048576){toast('Файл больше 25 МБ');notify('error');return}_tf(f)};
 /*J22 shrink больше не зависает на битой картинке*/
 window.shrink=function(src,max,q){return new Promise(function(ok,no){var im=new Image();
-  im.onload=function(){var k=Math.min(1,max/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=Math.max(1,im.width*k);c.height=Math.max(1,im.height*k);c.getContext('2d').drawImage(im,0,0,c.width,c.height);ok(c.toDataURL('image/jpeg',q))};
+  im.onload=function(){var k=Math.min(1,max/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=Math.max(1,im.width*k);c.height=Math.max(1,im.height*k);{const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);x.imageSmoothingQuality='high';x.drawImage(im,0,0,c.width,c.height)}ok(c.toDataURL('image/jpeg',q))};
   im.onerror=function(){no(new Error('decode'))};im.src=src})};
 /*J23 понятная ошибка вместо тихого провала*/
 addEventListener('unhandledrejection',function(e){if(e.reason&&e.reason.message==='decode'){e.preventDefault();toast('Не удалось открыть это фото. Попробуйте JPG или PNG');notify('error')}});
@@ -2100,7 +2107,7 @@ function svgView(code){var s=cleanSvg(code.trim());if(!s)return null;var box=el(
   im.onclick=function(){hp();try{LB.open(im,{save:function(){svgToPng(s,im.naturalWidth||512,im.naturalHeight||512,box.classList.contains('lt')?'#f4f4f8':null,'velora-drawing.png')}})}catch(e){}};
   return{node:box,actions:[{p:IP.bg,l:'Светлый/тёмный фон',fn:function(){box.classList.toggle('lt')}},{p:IP.img,l:'Сохранить PNG',fn:function(){svgToPng(s,im.naturalWidth||512,im.naturalHeight||512,box.classList.contains('lt')?'#f4f4f8':null,'velora-drawing.png');hp()}}],expand:function(){im.click()}}}
 function htmlDoc(code){return/<(!doctype|html)/i.test(code)?code:'<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0}body{padding:14px;font:15px/1.5 system-ui,-apple-system,sans-serif;color:#ececf4;background:#15151b}</style></head><body>'+code+'</body></html>'}
-function htmlView(code){var box=el('div','hv'),fr=el('iframe');fr.setAttribute('sandbox','allow-scripts');fr.setAttribute('loading','lazy');fr.title='Предпросмотр';fr.srcdoc=htmlDoc(code);box.appendChild(fr);
+function htmlView(code){var box=el('div','hv'),fr=el('iframe');fr.setAttribute('sandbox','allow-scripts');fr.title='Предпросмотр';fr.srcdoc=htmlDoc(code);box.appendChild(fr);
   return{node:box,actions:[{p:IP.run,l:'Запустить заново',fn:function(){fr.srcdoc='';setTimeout(function(){fr.srcdoc=htmlDoc(code)},30)}}],expand:function(){var f=el('iframe','mdlFrame');f.setAttribute('sandbox','allow-scripts');f.srcdoc=htmlDoc(code);openModal({title:'Предпросмотр',sub:'HTML',node:f,flush:true})}}}
 function chartView(code){var o;try{o=JSON.parse(code.replace(/,(\s*[}\]])/g,'$1'))}catch(e){return null}var sp=normChart(o);if(!sp)return null;var c=buildChart(sp);
   return{node:c,actions:[{p:IP.img,l:'Сохранить PNG',fn:function(){c._png();hp()}}],expand:function(){openModal({title:sp.title||'График',sub:'График',node:buildChart(sp,{w:Math.min(innerWidth-60,820)})})}}}
@@ -2618,14 +2625,14 @@ function studio(code){var w=el('div','');w.style.cssText='display:grid;grid-temp
 var _bc=buildCode;buildCode=function(lang,code,opt){var box=_bc(lang,code,opt),lg=(lang||'').toLowerCase().split(/[\s{]/)[0].replace(/^language-/,''),act=box.querySelector('.cba');if(!act)return box;
   var k=/^(js|javascript|mjs)$/.test(lg)?'js':lg==='css'?'css':null,fr0=act.firstChild;
   if(k){var xp=null;act.insertBefore(btn(IP.run,'Показать пример',function(){if(xp){xp.remove();xp=null;return}xp=el('div','hv');var fr=el('iframe');fr.setAttribute('sandbox','allow-scripts');fr.srcdoc=exDoc(k,code);xp.appendChild(fr);var h=box.querySelector('.cbh');h.parentNode.insertBefore(xp,h.nextSibling);hp('light')}),fr0)}
-  if(lg==='html'&&box.querySelector('iframe')){act.insertBefore(btn(IP.exp,'AI Studio: править код',function(){studio(code)}),fr0);
-    if(/<canvas/i.test(code))act.insertBefore(btn(IP.dl,'Записать видео (6 с)',function(){var f=box.querySelector('iframe');toast('Идёт запись 6 секунд…');try{f.contentWindow.postMessage({vrec:1,sec:6},'*')}catch(e){toast('Не удалось начать запись')}}),fr0)}
+  if(lg==='html'&&box.querySelector('iframe')){act.insertBefore(btn('<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13 7l4 4"/>','AI Studio: править код',function(){studio(code)}),fr0);
+    if(/<canvas/i.test(code))act.insertBefore(btn('<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3" fill="currentColor"/>','Записать видео (6 с)',function(){var f=box.querySelector('iframe');toast('Идёт запись 6 секунд…');try{f.contentWindow.postMessage({vrec:1,sec:6},'*')}catch(e){toast('Не удалось начать запись')}}),fr0)}
   return box};
 var _tf=takeFile;takeFile=function(f){tokTick();var n=Date.now();if(!TK.phd||n-TK.phd>864e5){TK.phd=n;TK.ph=0}
   if(tier()==='free'&&TK.ph>=3){toast('Free: 3 photo recognitions per day. Plus is unlimited');setTimeout(function(){openSheet()},700);return}TK.ph=(TK.ph||0)+1;tkSave();_tf(f)};
 var _dr=window.demoReply,F3='\x60\x60\x60';window.demoReply=function(){var us=chat().msgs.filter(function(m){return m.role==='user'}),m=us[us.length-1]||{},t=(m.content||'').toLowerCase();
-  if(/видео|анимац|video|animation/.test(t)&&!(m.files&&m.files.length))return 'Видео можно собрать кодом. Нажмите «Записать видео», и анимация сохранится файлом. Кнопка «AI Studio» откроет код для правок.\n\n'+F3+'html\n<canvas id=c width=540 height=960 style="width:100%"></canvas><script>var c=document.getElementById("c"),x=c.getContext("2d"),t=0;(function f(){t+=.02;var g=x.createLinearGradient(0,0,540,960);g.addColorStop(0,"#1b1b3a");g.addColorStop(1,"#0b0b0d");x.fillStyle=g;x.fillRect(0,0,540,960);for(var i=0;i<40;i++){var a=t+i*.4,r=60+i*9;x.beginPath();x.arc(270+Math.cos(a)*r*.8,480+Math.sin(a*1.3)*r,3+i*.15,0,7);x.fillStyle="hsla("+(200+i*4)+",90%,70%,.8)";x.fill()}requestAnimationFrame(f)})()<\/script>\n'+F3;
-  if(/js|javascript|скрипт/.test(t)&&/пример|код/.test(t))return 'Нажмите «Показать пример», и код выполнится под сообщением.\n\n'+F3+'js\nconst xs=[1,2,3,4,5];\nconsole.log("Квадраты:",xs.map(n=>n*n));\nconsole.log("Сумма:",xs.reduce((a,b)=>a+b,0));\n'+F3;
+  if(/видео|анимац|video|animation/.test(t)&&!/график|таблиц|диаграмм|схем/.test(t)&&!(m.files&&m.files.length))return 'Видео можно собрать кодом. Нажмите «Записать видео», и анимация сохранится файлом. Кнопка «AI Studio» откроет код для правок.\n\n'+F3+'html\n<canvas id=c width=540 height=960 style="width:100%"></canvas><script>var c=document.getElementById("c"),x=c.getContext("2d"),t=0;(function f(){t+=.02;var g=x.createLinearGradient(0,0,540,960);g.addColorStop(0,"#1b1b3a");g.addColorStop(1,"#0b0b0d");x.fillStyle=g;x.fillRect(0,0,540,960);for(var i=0;i<40;i++){var a=t+i*.4,r=60+i*9;x.beginPath();x.arc(270+Math.cos(a)*r*.8,480+Math.sin(a*1.3)*r,3+i*.15,0,7);x.fillStyle="hsla("+(200+i*4)+",90%,70%,.8)";x.fill()}requestAnimationFrame(f)})()<\/script>\n'+F3;
+  if(/(^|[^a-z])js([^a-z]|$)|javascript|скрипт/.test(t)&&/пример|код/.test(t))return 'Нажмите «Показать пример», и код выполнится под сообщением.\n\n'+F3+'js\nconst xs=[1,2,3,4,5];\nconsole.log("Квадраты:",xs.map(n=>n*n));\nconsole.log("Сумма:",xs.reduce((a,b)=>a+b,0));\n'+F3;
   return _dr()};
 /* тарифы: распределение функций */
 var P=function(id){return PLANS.filter(function(p){return p.id===id})[0]};
@@ -2643,7 +2650,7 @@ var PJ=[],PA=null;try{PJ=JSON.parse(localStorage.getItem('velora_pj')||'[]');PA=
 function pjSave(){try{localStorage.setItem('velora_pj',JSON.stringify(PJ));localStorage.setItem('velora_pja',PA||'')}catch(e){toast('Нет места для файлов проекта')}}
 var PJLIM={free:1,plus:10,pro:25,ultra:999};
 var _pt=profileText;profileText=function(){var r=_pt.apply(this,arguments),p=PJ.filter(function(x){return x.id===PA})[0];if(!p)return r;
-  var f=p.files.map(function(x){return'Файл '+x.n+':\n'+x.t}).join('\n\n').slice(0,6000);return r+'\nАктивный проект «'+p.name+'». Цель: '+(p.goal||'не указана')+'.'+(f?'\n'+f:'')};
+  var f=p.files.map(function(x){return'Файл '+x.n+':\n'+x.t}).join('\n\n').slice(0,1500);return r+'\nАктивный проект «'+p.name+'». Цель: '+(p.goal||'не указана')+'.'+(f?'\n'+f:'')};
 var pjIn=document.createElement('input');pjIn.type='file';pjIn.accept='.txt,.md,.csv,.json,.html,.js,.py,.css,text/*';pjIn.multiple=true;
 function pjUI(){var w=el('div','');w.style.cssText='display:grid;gap:12px;padding:4px 2px';
   function pick(p){pjIn.onchange=function(){[].forEach.call(pjIn.files,function(f){var r=new FileReader();r.onload=function(){p.files.push({n:f.name,t:String(r.result).slice(0,20000)});pjSave();draw();toast('Файл добавлен в проект')};r.readAsText(f)});pjIn.value=''};pjIn.click()}
@@ -2662,15 +2669,13 @@ $('#nvSet').before(nvPj);nvPj.onclick=function(){hp('soft');closeDrawer();openMo
 P('pro').feat=P('pro').feat.map(function(f){return f==='Velora Max model (limited)'?'25 projects with files · Velora Max (limited)':f});
 
 /* ===== v7: перебивание голосом ===== */
-(function(){var ac=null,an=null,buf=null,ms=null,hot=0;
+(function(){var buf=null,hot=0;
   function spk(){try{return speechSynthesis.speaking||(curAudio&&!curAudio.paused)}catch(e){return false}}
-  setInterval(function(){
-    if(!vm.on||!vm.stream){if(ac){try{ac.close()}catch(e){}ac=null;ms=null}hot=0;return}
-    if(ms!==vm.stream){try{if(ac)ac.close()}catch(e){}var AC=window.AudioContext||window.webkitAudioContext;ac=new AC();an=ac.createAnalyser();an.fftSize=512;ac.createMediaStreamSource(vm.stream).connect(an);buf=new Uint8Array(an.fftSize);ms=vm.stream}
-    if(!spk()){hot=0;return}
+  setInterval(function(){if(!vm.on||!vm.stream){hot=0;return}var an;try{an=window.vmAN()}catch(e){return}
+    if(!buf||buf.length!==an.fftSize)buf=new Uint8Array(an.fftSize);if(!spk()){hot=0;return}
     an.getByteTimeDomainData(buf);var mx=0;for(var i=0;i<buf.length;i++)mx=Math.max(mx,Math.abs(buf[i]-128));
-    hot=mx>38?hot+1:0;
-    if(hot>=5){hot=0;stopSpeak();vm.gen++;vm.spoke=false;try{haptic('light')}catch(e){}vmListen()}},60)})();
+    hot=mx>55?hot+1:0;
+    if(hot>=6){hot=0;stopSpeak();vm.gen++;vm.spoke=false;try{haptic('light')}catch(e){}vmListen()}},60)})();
 
 /* ===== v8: умный и красивый голосовой режим ===== */
 (function(){var vmEl=$('#vm'),orb=$('#orb'),GS=['happy','wink','jump','dance','laugh','spin','jelly','flip'],gt=0,gi=0;
@@ -2702,8 +2707,8 @@ P('pro').feat=P('pro').feat.map(function(f){return f==='Velora Max model (limite
 /* умное определение конца фразы */
 
 /* ===== v9: личность Velora, красивый предпросмотр, проекты ===== */
-var IDENT='Ты — Velora: ИИ-ассистент и мини-приложение в Telegram (сейчас закрытая бета). Твой создатель — разработчик с ником malchicismayami; больше о нём ты ничего не знаешь, подробности не выдумывай. Не называй себя ChatGPT, Claude и т.п.; если спросят, какая модель внутри, скажи, что точно не знаешь. Что умеет приложение: чат; создание фото и видео по описанию (видео ещё можно собрать кодом на canvas и записать в файл); правка фото; распознавание по фото; файлы, таблицы с сортировкой и CSV, графики, формулы, схемы, SVG; код с подсветкой, где HTML/JS/CSS показывается живым примером (игры, анимации) и правится в AI Studio; голосовой режим с перебиванием голосом; проекты (цель и файлы); память («запомни …», «забудь всё»); настройки тона, длины, языка и роли. Тарифы: Free 40K токенов в день, перерыв 3 ч; Plus 150 ₽ — 600K, 2 ч; Pro 300 ₽ — 1,5M, 1 ч; Ultra 500 ₽ — 3M, 30 мин. В бете всё открыто для теста. Глубокое исследование и карта памяти ещё в разработке — не обещай их как готовые. ';
-var _pt2=profileText;profileText=function(){return IDENT+_pt2.apply(this,arguments)};
+var IDENT='Ты — Velora, ИИ-ассистент (Telegram-мини-приложение, закрытая бета). Создатель — разработчик malchicismayami; другого о нём не знаешь, не выдумывай. Не называй себя ChatGPT или Claude; про модель внутри скажи, что не знаешь точно. Умеешь: чат, фото и видео, распознавание по фото, таблицы, графики, формулы, схемы, SVG, живой код (HTML/JS/CSS, игры), голос, проекты, память. Тарифы: Free 40K токенов/день, перерыв 3 ч; Plus 150 ₽; Pro 300 ₽; Ultra 500 ₽. Глубокое исследование и карта памяти ещё в разработке. ';
+var _pt2=profileText;profileText=function(){return (RICH2+IDENT+_pt2.apply(this,arguments)).slice(0,3400)};
 var ID_A={who:'Я Velora — ИИ-ассистент и мини-приложение в Telegram, сейчас в закрытой бете. Меня сделал разработчик с ником **malchicismayami**. Умею чат, фото и видео, распознавание по фото, таблицы, графики, формулы, код с живым примером, голосовой режим, проекты и память.',
   plans:'Тарифы Velora:\n\n- **Free** — 40K токенов в день, перерыв 3 часа\n- **Plus, 150 ₽** — 600K токенов, перерыв 2 часа, безлимит фото, голос, проекты\n- **Pro, 300 ₽** — 1,5M токенов, перерыв 1 час, глубокое исследование, видео из кода\n- **Ultra, 500 ₽** — 3M токенов, перерыв 30 минут, всё без ограничений\n\nПока идёт бета, всё открыто для теста.'};
 var _dr2=window.demoReply;window.demoReply=function(){var us=chat().msgs.filter(function(m){return m.role==='user'}),m=us[us.length-1]||{},t=(m.content||'').toLowerCase();
@@ -2733,6 +2738,22 @@ pjUI=function(){var w=el('div','pjw');
       c2.onclick=function(){if(!n.value.trim()){toast('Введите название');return}var p={id:'p'+Date.now(),name:n.value.trim(),goal:g.value.trim(),files:[]};PJ.push(p);PA=p.id;pjSave();hp('medium');toast('Проект создан и подключён');draw()};[n,g,c2].forEach(function(x){f.appendChild(x)});w.appendChild(f)}
     else{var u=el('div','pjn','<b>Лимит проектов: '+lim+'</b><small style="color:var(--dim)">Больше проектов дают старшие подписки.</small>'),bt=el('button','cta','See plans');bt.onclick=function(){openSheet()};u.appendChild(bt);w.appendChild(u)}}
   draw();return w};
+
+/* ===== v10: исправления игр, голоса, фото, подсказок ===== */
+var SHIM='<script>(function(){function mk(){var d={};return{getItem:function(k){return k in d?d[k]:null},setItem:function(k,v){d[k]=String(v)},removeItem:function(k){delete d[k]},clear:function(){d={}},key:function(i){return Object.keys(d)[i]||null},get length(){return Object.keys(d).length}}}["localStorage","sessionStorage"].forEach(function(n){try{window[n].getItem("x")}catch(e){try{Object.defineProperty(window,n,{value:mk(),configurable:true})}catch(_){}}});var last=0;window.addEventListener("error",function(e){try{var t=Date.now();if(t-last<3000)return;last=t;parent.postMessage({verr:String(e.message||"error")},"*");var b=document.getElementById("__err");if(!b){b=document.createElement("pre");b.id="__err";document.body.appendChild(b)}b.style.cssText="position:fixed;left:8px;right:8px;top:8px;margin:0;padding:8px 10px;border-radius:10px;background:rgba(120,20,20,.92);color:#fff;font:11px/1.4 monospace;white-space:pre-wrap;z-index:99999";b.textContent="Ошибка: "+e.message}catch(_){}})})();<\/script>';
+var PAD='<script>addEventListener("DOMContentLoaded",function(){var m=[["←","ArrowLeft",37],["↑","ArrowUp",38],["→","ArrowRight",39],["●","Space",32]],w=document.createElement("div");w.style.cssText="position:fixed;left:0;right:0;bottom:8px;display:flex;justify-content:space-between;padding:0 10px;pointer-events:none;z-index:99998;opacity:.85";function grp(a){var g=document.createElement("div");g.style.cssText="display:flex;gap:8px";a.forEach(function(i){var b=document.createElement("div");b.textContent=i[0];b.style.cssText="pointer-events:auto;width:52px;height:52px;border-radius:50%;display:grid;place-items:center;font:600 20px system-ui;color:#fff;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.3);user-select:none;-webkit-user-select:none;touch-action:none";function f(t){return function(e){e.preventDefault();var k=new KeyboardEvent(t,{key:i[1]=="Space"?" ":i[1],code:i[1],keyCode:i[2],which:i[2],bubbles:true});try{Object.defineProperty(k,"keyCode",{get:function(){return i[2]}});Object.defineProperty(k,"which",{get:function(){return i[2]}})}catch(_){}document.body.dispatchEvent(k)}}b.addEventListener("pointerdown",f("keydown"));["pointerup","pointercancel"].forEach(function(n){b.addEventListener(n,f("keyup"))});g.appendChild(b)});return g}w.appendChild(grp([m[0],m[2]]));w.appendChild(grp([m[1],m[3]]));document.body.appendChild(w)});<\/script>';
+var _hd2=htmlDoc;htmlDoc=function(c){var d=_hd2(c);
+  d=/<head[^>]*>/i.test(d)?d.replace(/<head[^>]*>/i,function(m){return m+SHIM}):/<html[^>]*>/i.test(d)?d.replace(/<html[^>]*>/i,function(m){return m+SHIM}):d.replace(/^(\s*<!doctype[^>]*>)?/i,function(m){return m+SHIM});
+  if(/keydown|keyup|ArrowLeft|ArrowUp|keyCode|\.key\b/.test(c)&&!/touchstart|pointerdown|touchmove|touchend/.test(c))d+=PAD;return d};
+var lastE=0;addEventListener('message',function(e){var d=e.data;if(d&&d.verr&&Date.now()-lastE>3000){lastE=Date.now();toast('Ошибка в коде: '+String(d.verr).slice(0,80))}});
+/* голос: один общий аудио-контекст (на iOS новые контексты в таймерах «спят», из-за этого он слушал только первый раз) */
+var vac=null,van=null,vsrc=null;
+window.vmAC=function(){var AC=window.AudioContext||window.webkitAudioContext;if(!vac||vac.state==='closed')vac=new AC();if(vac.state==='suspended'){try{vac.resume()}catch(e){}}return vac};
+window.vmAN=function(){var c=window.vmAC();if(!van||vsrc!==vm.stream){van=c.createAnalyser();van.fftSize=512;c.createMediaStreamSource(vm.stream).connect(van);vsrc=vm.stream}return van};
+var _vo=vmOpen;vmOpen=function(){try{window.vmAC()}catch(e){}return _vo.apply(this,arguments)};$('#vmB').onclick=vmOpen;
+/* подсказка форматов: идёт первой, чтобы сервер её не обрезал */
+var RH0=window.RICH_HINT||'';window.RICH_HINT='';
+var RICH2=RH0+' Если просят таблицу — всегда GFM-таблица; график — блок chart; игру — полный рабочий код в одном блоке ```html: без внешних файлов и localStorage, управление и касанием (крупные экранные кнопки), и клавишами, с кнопкой старт/рестарт; видео — анимация на canvas в блоке ```html (пользователь запишет её кнопкой). Никогда не отвечай, что не умеешь это делать. ';
 
 })();
 
