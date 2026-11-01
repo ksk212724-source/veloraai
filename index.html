@@ -2153,7 +2153,10 @@ function svgView(code){var s=cleanSvg(code.trim());if(!s)return null;var box=el(
   im.onclick=function(){hp();try{LB.open(im,{save:function(){svgToPng(s,im.naturalWidth||512,im.naturalHeight||512,box.classList.contains('lt')?'#f4f4f8':null,'velora-drawing.png')}})}catch(e){}};
   return{node:box,actions:[{p:IP.bg,l:'Светлый/тёмный фон',fn:function(){box.classList.toggle('lt')}},{p:IP.img,l:'Сохранить PNG',fn:function(){svgToPng(s,im.naturalWidth||512,im.naturalHeight||512,box.classList.contains('lt')?'#f4f4f8':null,'velora-drawing.png');hp()}}],expand:function(){im.click()}}}
 function htmlDoc(code){return/<(!doctype|html)/i.test(code)?code:'<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0}body{padding:14px;font:15px/1.5 system-ui,-apple-system,sans-serif;color:#ececf4;background:#15151b}</style></head><body>'+code+'</body></html>'}
-function htmlView(code){var box=el('div','hv'),fr=el('iframe');fr.setAttribute('sandbox','allow-scripts');fr.title='Предпросмотр';fr.srcdoc=htmlDoc(code);box.appendChild(fr);
+function wd15(fr,code,box){var ok=0,h=function(e){if(e.source===fr.contentWindow&&e.data&&e.data.vping)ok=1};addEventListener('message',h);
+  setTimeout(function(){removeEventListener('message',h);var o=(code.match(/<script/gi)||[]).length,k=(code.match(/<\/script>/gi)||[]).length;if((ok&&o<=k)||!box.isConnected)return;
+  box.appendChild(el('div','pvn',o>k?'Ответ нейросети оборвался на полуслове, код неполный. Нажмите ↻ под сообщением, чтобы получить заново.':'Код не запустился на этом устройстве. Нажмите «Во весь экран» или попросите версию без внешних библиотек.'))},2500)}
+function htmlView(code){var box=el('div','hv'),fr=el('iframe');fr.setAttribute('sandbox','allow-scripts');fr.title='Предпросмотр';fr.srcdoc=htmlDoc(code);box.appendChild(fr);try{wd15(fr,code,box)}catch(e){}
   return{node:box,actions:[{p:IP.run,l:'Запустить заново',fn:function(){fr.srcdoc='';setTimeout(function(){fr.srcdoc=htmlDoc(code)},30)}}],expand:function(){var f=el('iframe','mdlFrame');f.setAttribute('sandbox','allow-scripts');f.srcdoc=htmlDoc(code);openModal({title:'Предпросмотр',sub:'HTML',node:f,flush:true})}}}
 function chartView(code){var o;try{o=JSON.parse(code.replace(/,(\s*[}\]])/g,'$1'))}catch(e){return null}var sp=normChart(o);if(!sp)return null;var c=buildChart(sp);
   return{node:c,actions:[{p:IP.img,l:'Сохранить PNG',fn:function(){c._png();hp()}}],expand:function(){openModal({title:sp.title||'График',sub:'График',node:buildChart(sp,{w:Math.min(innerWidth-60,820)})})}}}
@@ -2814,6 +2817,7 @@ var _sh=shrink;shrink=function(s,max,q){if(max<2000)return _sh(s,max,q);return n
 /* игры: экранные кнопки только на сенсорных, общие стили против наложений */
 PAD=PAD.replace('addEventListener("DOMContentLoaded",function(){','addEventListener("DOMContentLoaded",function(){if(!matchMedia("(pointer:coarse)").matches)return;');
 var _hd3=htmlDoc;htmlDoc=function(c){var d=_hd3(c),S3='<style>*,*::before,*::after{box-sizing:border-box}html,body{max-width:100%;overflow-x:hidden}canvas{max-width:100%}</style>';return /<\/head>/i.test(d)?d.replace(/<\/head>/i,S3+'</head>'):S3+d};
+var PING15='<script>parent.postMessage({vping:1},"*")<\/script>',_hd4=htmlDoc;htmlDoc=function(c){var d=_hd4(c),o=(c.match(/<script/gi)||[]).length,k=(c.match(/<\/script>/gi)||[]).length;if(o>k)d+='<\/script>';return /<head[^>]*>/i.test(d)?d.replace(/<head[^>]*>/i,function(m){return m+PING15}):d+PING15};
 var _bc3=buildCode;buildCode=function(){var b=_bc3.apply(this,arguments),seen={};[].forEach.call(b.querySelectorAll('.cba button'),function(x){var k=x.getAttribute('aria-label')||x.title;if(seen[k])x.remove();else seen[k]=1});return b};
 
 /* голос: микрофон перепроверяется перед каждым прослушиванием */
@@ -2980,7 +2984,8 @@ var _vo14=vmOpen;vmOpen=function(){if(vmDemoOn())return vmDemo();return _vo14.ap
 </script>
 <!-- ===== VELORA v0.15: голос в самом чате, свои игры и видео ===== -->
 <style>
-.beta::after{content:" · v0.15"}
+.cb,.cbv,.hv,.hvp{-webkit-backdrop-filter:none!important;backdrop-filter:none!important}.cb.rv,.cb.rv:not(.vis){opacity:1!important}.hvp{background:rgba(10,10,16,.5)!important}.hv iframe{transform:translateZ(0);-webkit-transform:translateZ(0)}
+.vmq .rich>*:not(.rv),.vmq .mtools{display:none!important}.beta::after{content:" · v0.15"}
 #vm{display:none!important}
 #vmM2{position:fixed!important;left:auto!important;bottom:auto!important;right:12px;top:calc(var(--sat) + 64px);width:68px;height:68px;z-index:30;cursor:pointer;touch-action:manipulation;border-radius:50%}
 #vmM2::after{content:"";position:absolute;inset:-4px;border-radius:50%;border:2px solid rgba(255,255,255,.55);opacity:0;pointer-events:none}
@@ -2990,19 +2995,11 @@ var _vo14=vmOpen;vmOpen=function(){if(vmDemoOn())return vmDemo();return _vo14.ap
 @keyframes v15p{from{scale:.85;opacity:.9}to{scale:1.5;opacity:0}}
 #vmBb{position:fixed;right:86px;top:calc(var(--sat) + 70px);max-width:62vw;z-index:30;padding:10px 15px;border-radius:20px;font-size:14.5px;line-height:1.4;color:#f4f4f6;background:rgba(20,20,26,.88);border:1px solid rgba(255,255,255,.16);opacity:0;translate:10px 0;transition:opacity .35s,translate .4s var(--ease);pointer-events:none}
 #vmBb.on{opacity:1;translate:0 0}
-#gm{position:fixed;inset:0;z-index:15;background:#0b0b12;display:none}
-#gm.on{display:block}#gm iframe{width:100%;height:100%;border:0}
-#gm button{position:absolute;left:12px;top:calc(var(--sat) + 10px);height:40px;padding:0 16px;border-radius:99px;background:rgba(255,255,255,.14);font-size:14px}
-.v15c{position:relative;border-radius:22px;overflow:hidden;background:#12121a;max-width:270px}
-.v15c canvas{display:block;width:100%;height:auto}
-.v15c button{display:block;width:100%;height:48px;font-size:15px;font-weight:500;background:rgba(255,255,255,.1)}
-.v15g{display:grid;place-items:center;height:130px;font-size:54px}
 </style>
 <div class="mc mcP off" id="vmM2" data-g="1" data-sk="a" style="display:none"></div><div id="vmBb"></div>
-<div id="gm"><button type="button">‹ Назад в чат</button><iframe sandbox="allow-scripts"></iframe></div>
 <script>
 (function(){
-var $=function(s){return document.querySelector(s)},mm=$('#vmM2'),bb=$('#vmBb'),gm=$('#gm'),gf=gm.querySelector('iframe');
+var $=function(s){return document.querySelector(s)},mm=$('#vmM2'),bb=$('#vmBb');
 /* ---------- полёт из кнопки в угол ---------- */
 function fly(on){var b=$('#vmB').getBoundingClientRect();mm.style.display='block';mm.classList.remove('off');
  var r=mm.getBoundingClientRect(),dx=b.left+b.width/2-r.left-r.width/2,dy=b.top+b.height/2-r.top-r.height/2,
@@ -3023,48 +3020,9 @@ vmOpen=async function(){if(vm.on)return;if(!navigator.mediaDevices||!window.Medi
  vm.on=true;vm.demo=false;vm.fl=true;vm.gen++;fly(true);setTimeout(function(){if(vm.on)vmListen()},700)};
 var _vc=vmClose;vmClose=function(){var was=vm.on;_vc();vm.demo=false;vm.fl=true;bb.classList.remove('on');clearInterval(bt);if(was)fly(false)};
 $('#vmB').onclick=function(){vm.on?vmClose():vmOpen()};mm.onclick=function(){haptic('soft');vmClose()};
-/* ---------- карточка + ответ (без сервера) ---------- */
-function reply(t,r,card){push({role:'user',content:t});show(textEl('user',t,false));
- push({role:'assistant',content:r});show(textEl('assistant',r));if(card)show(card);
- if(vm.on){vm.spoke=true;vmState('speak');speakText(r,vmNext)}else snd('recv')}
-function msgCard(inner){var d=document.createElement('div');d.className='msg ai';var c=document.createElement('div');c.className='v15c';c.appendChild(inner);d.appendChild(c);return[d,c]}
-/* ---------- игры ---------- */
-var CSS='<meta name=viewport content="width=device-width,initial-scale=1,user-scalable=no"><body style="margin:0;background:#0b0b12;color:#fff;font:600 17px system-ui;text-align:center;touch-action:none;overflow:hidden;-webkit-user-select:none;user-select:none">',E='<\/script>';
-var GAMES={
-snake:['Змейка','🐍','Змейка готова. Проводите пальцем, чтобы повернуть, и собирайте красные точки.',CSS+'<div id=s style="padding:62px 0 8px;font-size:22px">0</div><canvas id=c width=300 height=300 style="width:min(92vw,62vh);background:#14141f;border-radius:16px"></canvas><p style="color:#888;font-size:13px">Тап — начать заново</p><script>var c=document.getElementById("c"),x=c.getContext("2d"),N=15,q,d,f,sc,T;function R(){q=[[7,7],[6,7],[5,7]];d=[1,0];f=[10,4];sc=0;s.textContent=0}R();onpointerdown=function(e){T=[e.clientX,e.clientY]};onpointerup=function(e){if(!T)return;var a=e.clientX-T[0],b=e.clientY-T[1];if(Math.abs(a)+Math.abs(b)<20){R();return}d=Math.abs(a)>Math.abs(b)?[a>0?1:-1,0]:[0,b>0?1:-1]};setInterval(function(){var h=[q[0][0]+d[0],q[0][1]+d[1]];if(h[0]<0||h[1]<0||h[0]>=N||h[1]>=N||q.some(function(p){return p[0]==h[0]&&p[1]==h[1]}))return R();q.unshift(h);if(h[0]==f[0]&&h[1]==f[1]){s.textContent=++sc;f=[Math.random()*N|0,Math.random()*N|0]}else q.pop();x.fillStyle="#14141f";x.fillRect(0,0,300,300);x.fillStyle="#ff6b8a";x.fillRect(f[0]*20+2,f[1]*20+2,16,16);x.fillStyle="#7cf0b4";q.forEach(function(p){x.fillRect(p[0]*20+1,p[1]*20+1,18,18)})},130)'+E],
-ttt:['Крестики-нолики','❌','Крестики-нолики готовы. Вы играете крестиками, ходите первым.',CSS+'<p id=r style="padding-top:70px;font-size:22px;min-height:30px"></p><div id=g style="display:grid;grid:repeat(3,92px)/repeat(3,92px);gap:8px;justify-content:center"></div><p onclick="b=Array(9).fill(\'\');dr();r.textContent=\'\'" style="color:#7cc4ff">Заново</p><script>var b=Array(9).fill(""),L=[[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]],g=document.getElementById("g");function W(p){return L.some(function(l){return l.every(function(i){return b[i]==p})})}function T(p){var e=[];b.forEach(function(v,k){if(!v)e.push(k)});return e.filter(function(k){b[k]=p;var w=W(p);b[k]="";return w})[0]}function dr(){g.innerHTML="";b.forEach(function(v,i){var e=document.createElement("button");e.textContent=v;e.style.cssText="font:700 44px system-ui;border:0;border-radius:18px;background:#1c1c2a;color:"+(v=="X"?"#7cc4ff":"#ff8fa6");e.onclick=function(){go(i)};g.appendChild(e)})}function go(i){if(b[i]||W("X")||W("O"))return;b[i]="X";if(!W("X")){var e=[];b.forEach(function(v,k){if(!v)e.push(k)});var m=T("O");if(m==null)m=T("X");if(m==null)m=b[4]?e[Math.random()*e.length|0]:4;if(m!=null)b[m]="O"}dr();r.textContent=W("X")?"Вы победили!":W("O")?"Я победила!":b.every(function(v){return v})?"Ничья":""}dr()'+E],
-catch:['Лови звёзды','⭐','Лови звёзды готова. Тапайте по звёздам, пока они не упали.',CSS+'<canvas id=c></canvas><script>var c=document.getElementById("c"),x=c.getContext("2d"),W=c.width=innerWidth,H=c.height=innerHeight,S=[],sc=0,l=5;onpointerdown=function(e){var k=-1;S.forEach(function(s,i){if(k<0&&Math.hypot(s.x-e.clientX,s.y-e.clientY)<42)k=i});if(k>=0){S.splice(k,1);sc++}else if(l<=0){S=[];sc=0;l=5}};setInterval(function(){if(l>0&&Math.random()<.06+sc/2000)S.push({x:30+Math.random()*(W-60),y:-20,v:1.5+Math.random()*2+sc/40})},16);(function f(){x.fillStyle="#0b0b16";x.fillRect(0,0,W,H);x.font="34px serif";S=S.filter(function(s){s.y+=s.v;x.fillText("⭐",s.x-17,s.y+12);if(s.y>H){l--;return false}return true});x.fillStyle="#fff";x.font="600 20px system-ui";x.fillText("⭐ "+sc+"   ❤ "+Math.max(l,0),16,70);if(l<=0)x.fillText("Конец. Тап — заново",16,H/2);requestAnimationFrame(f)})()'+E]};
-function play(k){gf.srcdoc=GAMES[k][3];gm.classList.add('on');try{haptic('medium')}catch(e){}}
-gm.querySelector('button').onclick=function(){gm.classList.remove('on');gf.srcdoc='';haptic('soft')};
-function gameCard(k){var g=GAMES[k],p=document.createElement('div');p.innerHTML='<div class="v15g">'+g[1]+'</div><button type="button">Играть: '+g[0]+'</button>';var m=msgCard(p);p.querySelector('button').onclick=function(){play(k)};return m[0]}
-/* ---------- видео: живая анимация по описанию ---------- */
-function clip(pr){var W=270,H=480,cv=document.createElement('canvas');cv.width=W*2;cv.height=H*2;var x=cv.getContext('2d'),p=pr.toLowerCase(),sd=0,i;for(i=0;i<p.length;i++)sd=(sd*31+p.charCodeAt(i))>>>0;
- var rnd=function(){return(sd=(sd*1664525+1013904223)>>>0)/4294967296},hue=Math.floor(rnd()*360),
- th=/дожд|ливень|rain/.test(p)?'rain':/снег|зим|snow/.test(p)?'snow':/космос|звезд|галакт|space/.test(p)?'space':/мор[еяю]|океан|волн|sea/.test(p)?'sea':'orb',P=[];
- for(i=0;i<(th==='orb'?60:120);i++)P.push({x:rnd(),y:rnd(),z:.3+rnd()*.7,a:rnd()*6.28});var t0=performance.now();
- var words=pr.split(' '),ls=[],l='';words.forEach(function(w){if((l+w).length>16){ls.push(l);l=''}l+=w+' '});ls.push(l);
- (function f(now){if(!cv.isConnected&&now-t0>500)return;requestAnimationFrame(f);var t=(now-t0)/1000;x.setTransform(2,0,0,2,0,0);
- var g=x.createLinearGradient(0,0,0,H);g.addColorStop(0,'hsl('+hue+',55%,'+(th==='snow'?38:15)+'%)');g.addColorStop(1,'hsl('+(hue+50)%360+',60%,6%)');x.fillStyle=g;x.fillRect(0,0,W,H);
- P.forEach(function(o){var s=o.z;x.beginPath();
-  if(th==='rain'){var px=o.x*W,py=((o.y+t*s*.9)%1)*H;x.strokeStyle='hsla('+hue+',80%,80%,'+(.2+s*.4)+')';x.lineWidth=1+s;x.moveTo(px,py);x.lineTo(px-3,py+20*s);x.stroke()}
-  else if(th==='snow'){x.fillStyle='rgba(255,255,255,'+(.3+s*.6)+')';x.arc(((o.x+Math.sin(t+o.a)*.03)%1)*W,((o.y+t*s*.12)%1)*H,2+s*3,0,7);x.fill()}
-  else if(th==='space'){var r=(o.y+t*s*.15)%1;x.fillStyle='hsla('+(hue+o.a*20)+',90%,85%,'+r+')';x.arc(W/2+(o.x-.5)*W*r*3,H/2+Math.sin(o.a)*H*r*.6,1+r*3,0,7);x.fill()}
-  else if(th==='sea'){x.strokeStyle='hsla('+hue+',70%,70%,'+(.15+s*.3)+')';x.lineWidth=2;var y0=H*(.45+o.y*.5);for(var q=0;q<=W;q+=20)x.lineTo(q,y0+Math.sin(q*.02+t*s*2+o.a)*10);x.stroke()}
-  else{x.fillStyle='hsla('+(hue+o.x*90)+',90%,70%,.75)';x.arc(W/2+Math.cos(o.a+t*s)*(60+o.y*100),H/2+Math.sin(o.a*1.3+t*s)*(80+o.y*130),2+s*5,0,7);x.fill()}});
- x.fillStyle='#fff';x.font='600 22px system-ui';x.textAlign='center';ls.slice(0,4).forEach(function(q,j){x.fillText(q.trim(),W/2,H-70+j*26-ls.length*10)})})(t0);return cv}
-function videoCard(pr){var m=msgCard(clip(pr));return m[0]}
-var _g=generate;generate=function(kind,pr,v,tk,ph){if(kind!=='video')return _g.apply(this,arguments);
- push({role:'assistant',content:'[показано видео: '+pr+']'});show(videoCard(pr));return Promise.resolve()};
-/* ---------- понимание просьб голосом и текстом ---------- */
-function intent(t){t=t.toLowerCase();if(t.length>160||/график|таблиц|схем|код\b|нарисуй/.test(t))return null;
- if(/(сделай|создай|сгенерируй|сними|покажи|хочу|запусти).{0,25}(видео|ролик|клип|анимаци)/.test(t))return['v',t.replace(/^.*?(видео|ролик|клип|анимаци\S*)\s*(про|о|об|на тему|с)?\s*/,'')||'Velora'];
- if(/змейк|snake/.test(t))return['g','snake'];if(/крестик|нолик/.test(t))return['g','ttt'];if(/звёзд|звезд|лови/.test(t)&&/игр|поигра|сыгра/.test(t))return['g','catch'];
- if(/(игр[ауы]|поигра|сыгра)/.test(t)&&/(сделай|создай|запусти|давай|хочу|покажи|во что)/.test(t)){var a=['snake','ttt','catch'];return['g',a[Math.floor(Math.random()*3)]]}return null}
-var _s=submit;submit=function(text){var t=(text==null?inp.value:text).trim();
- if(t&&!S.busy&&!S.img&&!(window.A&&A.files.length)){var k=intent(t);if(k){inp.value='';fit();haptic('medium');
-  if(k[0]==='g'){var g=GAMES[k[1]];reply(t,g[2],gameCard(k[1]));setTimeout(function(){play(k[1])},vm.on?2600:500)}
-  else{reply(t,'Снимаю короткое видео: «'+k[1]+'».',videoCard(k[1]))}return}}
- return _s.apply(this,arguments)};
+/* во время голоса текст ответа не дублируется в чате: остаются фото, видео, код, таблицы, графики */
+var _sh15=show;show=function(el){if(vm.on&&el&&el.classList&&el.classList.contains('ai')&&el.querySelector('.txt')){
+ if(!el.querySelector('.cb,.tb,.ch,.dg,.mathb')){try{dropHello()}catch(e){}return}el.classList.add('vmq')}return _sh15(el)};
 })();
 </script>
 </body>
