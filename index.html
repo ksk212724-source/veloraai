@@ -417,6 +417,35 @@ html.dr .app{transform:translateX(var(--dw)) scale(.97);border-radius:46px;box-s
 .cb.hasv .cbt{margin-left:auto}
 .hv,.cbv{min-width:0}.hv iframe{display:block;max-width:100%}
 </style>
+<style>
+/* v11: шапка блока кода — сетка, ничего не налезает и не дублируется */
+.cb .cbh{display:grid!important;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:6px 10px}
+.cb .cbl{grid-column:1;min-width:0;position:static!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cb .cbt{grid-column:2;position:relative!important;margin:0!important;flex:none}
+.cb .cba{grid-column:1/-1;display:flex!important;justify-content:space-between;position:static!important;width:100%;border-top:1px solid rgba(255,255,255,.07);padding-top:4px}
+.cb:not(.hasv) .cba{grid-column:2;width:auto;border:0;padding:0}
+.cb .hv iframe{height:min(520px,72vh)!important}
+/* v11: голосовой режим */
+#vm{background:#05060d!important;overflow:hidden;gap:18px;--c1:#2a6cff;--c2:#19c6c0;--c3:#5b3cff}
+#vm[data-s=think]{--c1:#7a3cff;--c2:#d04cff;--c3:#3a2cff}#vm[data-s=speak]{--c1:#ff8a3c;--c2:#ff4f8a;--c3:#ffc23c}
+#vm>canvas{display:none!important}
+.vmbg{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+.vmbg u{position:absolute;width:360px;height:360px;border-radius:50%;filter:blur(80px);opacity:.5;transition:background 1.2s;animation:vmf 13s ease-in-out infinite alternate}
+.vmbg u:nth-child(1){left:-120px;top:4%;background:var(--c1)}.vmbg u:nth-child(2){right:-130px;top:34%;background:var(--c2);animation-delay:-5s}.vmbg u:nth-child(3){left:10%;bottom:-160px;background:var(--c3);animation-delay:-9s}
+@keyframes vmf{to{transform:translate(40px,-50px) scale(1.2)}}
+.vmhd{position:absolute;top:calc(var(--sat,0px) + 24px);left:20px;display:flex;align-items:center;gap:10px;font-size:17px}
+.vmhd em{font-style:normal;font-size:12px;padding:4px 10px;border-radius:99px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.16);color:#dfe3ff}
+#vm .orb{width:260px;height:260px;margin:0;position:relative}#vm .orb i{display:none}
+#vm .orb::before{content:"";position:absolute;inset:14%;border-radius:50%;background:radial-gradient(circle,rgba(255,255,255,.16),transparent 70%);box-shadow:0 0 110px 36px var(--c1);opacity:.4;transition:box-shadow 1s,opacity .6s}
+#vm[data-s=listen] .orb::before,#vm[data-s=speak] .orb::before{opacity:.65}
+#vm .orb .mc{position:absolute!important;left:50%!important;top:50%!important;bottom:auto!important;margin:-110px 0 0 -110px!important}
+.vmbars{position:relative;display:flex;align-items:center;justify-content:center;gap:5px;height:54px}
+.vmbars span{width:5px;height:54px;border-radius:5px;background:linear-gradient(var(--c1),var(--c2));transform:scaleY(.1);transition:background 1s;will-change:transform}
+#vm p{position:relative;max-width:min(88vw,420px);text-align:center;font:600 20px/1.35 var(--sans);padding:14px 20px;border-radius:22px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);min-height:54px}
+#vm small{position:relative}
+.vmdock{position:relative;display:flex;gap:12px;margin-top:6px}
+.vmb{padding:13px 22px;border-radius:99px;font:600 15px var(--sans);color:#fff;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2)}.vmb.end{background:rgba(255,69,58,.85);border-color:transparent}
+</style>
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -453,7 +482,7 @@ html.dr .app{transform:translateX(var(--dw)) scale(.97);border-radius:46px;box-s
   </div></div>
 </div>
 
-<div class="vm" id="vm"><button class="gl rb vmx" id="vmX" aria-label="Закрыть"><svg class="ic" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button><div class="orb" id="orb"><i></i><i></i><i></i></div><p id="vmS">Говорите…</p><small>Нажмите на шар, чтобы перебить или ответить</small></div>
+<div class="vm" id="vm"><div class="vmbg"><u></u><u></u><u></u></div><div class="vmhd"><b>Velora</b><em id="vmT">Голосовой режим</em></div><button class="gl rb vmx" id="vmX" aria-label="Закрыть"><svg class="ic" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button><div class="orb" id="orb"><i></i><i></i><i></i></div><div class="vmbars" id="vmBars"></div><p id="vmS">Говорите…</p><small>Просто говорите. Нажмите на талисман, чтобы перебить</small><div class="vmdock"><button type="button" class="vmb" id="vmM">Перебить</button><button type="button" class="vmb end" id="vmE">Завершить</button></div></div>
 <div class="lock" id="lock" hidden><div class="mc mcB" data-seq="wave:2500,idle"></div><h3>Введите пароль</h3><div class="pw gl"><input id="pw" type="password" autocomplete="off" autocapitalize="off" placeholder="Пароль"><button class="rb gl" id="pwB" aria-label="Войти"><svg class="ic" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button></div><p id="pwE"></p></div>
 <div class="mc mcP off" id="peek" data-g="1"></div>
 <div class="scrim" id="scrim"></div>
@@ -823,7 +852,7 @@ shot.onchange=()=>{const f=shot.files[0];shot.value='';takeFile(f)};
 /* встроенная камера */
 const cam=$('#cam'),camV=$('#camV');let camStream=null,camFace='environment';
 function camStop(){if(camStream){camStream.getTracks().forEach(t=>t.stop());camStream=null}camV.srcObject=null}
-async function camStart(){camStop();try{camStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:camFace},width:{ideal:1920},height:{ideal:1920}},audio:false});
+async function camStart(){camStop();try{camStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:camFace},width:{ideal:4096},height:{ideal:4096}},audio:false});
   camV.srcObject=camStream;camV.style.transform=camFace==='user'?'scaleX(-1)':'';try{await camV.play()}catch(e){}return true}catch(e){camStop();return false}}
 function camClose(){camStop();cam.classList.remove('on');setTimeout(()=>{cam.hidden=true},300)}
 async function openCamera(){haptic('soft');
@@ -2755,6 +2784,88 @@ var _vo=vmOpen;vmOpen=function(){try{window.vmAC()}catch(e){}return _vo.apply(th
 var RH0=window.RICH_HINT||'';window.RICH_HINT='';
 var RICH2=RH0+' Если просят таблицу — всегда GFM-таблица; график — блок chart; игру — полный рабочий код в одном блоке ```html: без внешних файлов и localStorage, управление и касанием (крупные экранные кнопки), и клавишами, с кнопкой старт/рестарт; видео — анимация на canvas в блоке ```html (пользователь запишет её кнопкой). Никогда не отвечай, что не умеешь это делать. ';
 
+
+/* ===== v11 ===== */
+IDENT='Ты — Velora, ИИ-ассистент: Telegram-мини-приложение, закрытая бета. Создатель — разработчик malchicismayami; больше о нём ничего не известно, не выдумывай. Не называй себя ChatGPT, Claude или Gemini; какая модель внутри — не знаешь. О себе говори уверенно и по делу. Умеешь: чат; распознавание фото (кнопка «+» → фото или камера); создание картинок и видео; правка фото; таблицы, графики, схемы, формулы, SVG; код с живым предпросмотром (вкладки «Просмотр/Код», запуск, во весь экран, скачать, запись видео с canvas, AI Studio для правок); игры прямо в чате; голосовой режим (значок волны у поля ввода) с анимированным талисманом; проекты (цель и файлы); память («запомни …»); настройки тона, длины, языка, шрифта и звука. Тарифы: Free 40K токенов/день, перерыв 3 ч; Plus 150 ₽ — 600K; Pro 300 ₽ — 1,5M; Ultra 500 ₽ — 3M. Глубокое исследование и карта памяти в разработке. В бете лимиты сняты. ';
+RICH2=' ГЛАВНОЕ: выполняй просьбу сразу и целиком, с первого раза. Не задавай уточняющих вопросов, не предлагай варианты на выбор — сама выбери разумные значения и одной строкой в конце скажи, что предположила. Никогда не отвечай «не умею», «уточните», «какой именно». Таблица — GFM-таблица. График — блок ```chart с JSON {"type":"bar|line|area|pie|donut","title":"…","labels":[…],"series":[{"name":"…","data":[…]}]}. Схема — ```diagram. Рисунок, логотип — ```svg. Формула — ```latex. Страница или виджет — ```html. ИГРА — один блок ```html с полным рабочим кодом: только чистый JS и canvas, без CDN, three.js и любых внешних файлов, без localStorage и alert; 3D имитируй в 2D. Стартовый экран, старт по первому касанию или клавише, счёт, game over, кнопка «Заново»; управление и касанием (крупные кнопки), и клавишами; canvas подгоняй под окно через resize. ТЕКСТ НЕ ДОЛЖЕН НАСЛАИВАТЬСЯ: весь HUD рисуй на canvas после clearRect за один проход в разных местах (счёт слева сверху, рекорд справа сверху, подсказки по центру только на стартовом экране) или в одном flex-контейнере; не ставь position:absolute-тексты друг на друга; никогда не оставляй надпись «Загрузка». ВИДЕО — один блок ```html с одним <canvas width=540 height=960> и анимацией на requestAnimationFrame по времени: сцены 6–10 с, зацикленные, плавные переходы, текст рисуй на canvas по одной надписи за раз, с обводкой для читаемости, без внешних ресурсов. Перед ответом мысленно проверь код на ошибки. Синтаксис блоков не объясняй. Фото разглядывай внимательно: детали, объекты, текст на картинке. ';
+ID_A.who='Я Velora — ИИ-ассистент, мини-приложение в Telegram (закрытая бета). Меня сделал разработчик **malchicismayami**. Умею: чат, распознавание фото, создание фото и видео, таблицы, графики, схемы, формулы, код с живым предпросмотром, игры, голосовой режим, проекты и память. Просите сразу, что нужно — я сделаю с первого раза.';
+profileText=(function(f){return function(){return (RICH2+IDENT+f.apply(this,arguments)).slice(0,4200)}})(_pt2);
+
+/* фото: максимум качества (до 4096 px, JPEG 0.97) */
+var _sh=shrink;shrink=function(s,max,q){if(max<2000)return _sh(s,max,q);return new Promise(function(ok){var im=new Image();im.onload=function(){var M=4096,Q=.97,o;for(var i=0;i<7;i++){var k=Math.min(1,M/Math.max(im.naturalWidth,im.naturalHeight)),c=document.createElement('canvas');c.width=Math.round(im.naturalWidth*k);c.height=Math.round(im.naturalHeight*k);var x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);x.imageSmoothingEnabled=true;x.imageSmoothingQuality='high';x.drawImage(im,0,0,c.width,c.height);o=c.toDataURL('image/jpeg',Q);if(o.length<9e6)break;Q=Math.max(.9,Q-.03);if(Q<=.9)M=Math.round(M*.85)}ok(o)};im.onerror=function(){_sh(s,max,q).then(ok)};im.src=s})};
+
+/* игры: экранные кнопки только на сенсорных, общие стили против наложений */
+PAD=PAD.replace('addEventListener("DOMContentLoaded",function(){','addEventListener("DOMContentLoaded",function(){if(!matchMedia("(pointer:coarse)").matches)return;');
+var _hd3=htmlDoc;htmlDoc=function(c){var d=_hd3(c),S3='<style>*,*::before,*::after{box-sizing:border-box}html,body{max-width:100%;overflow-x:hidden}canvas{max-width:100%}</style>';return /<\/head>/i.test(d)?d.replace(/<\/head>/i,S3+'</head>'):S3+d};
+var _bc3=buildCode;buildCode=function(){var b=_bc3.apply(this,arguments),seen={};[].forEach.call(b.querySelectorAll('.cba button'),function(x){var k=x.getAttribute('aria-label')||x.title;if(seen[k])x.remove();else seen[k]=1});return b};
+
+/* голос: микрофон перепроверяется перед каждым прослушиванием */
+var _vs=vmState;vmState=function(k,t){_vs(k,t);var v=$('#vm');v.dataset.s=k;$('#vmT').textContent={listen:'Слушаю',think:'Думаю',speak:'Отвечаю',idle:'Готова'}[k]||''};
+async function vmEnsure(force){var t=vm.stream&&vm.stream.getAudioTracks()[0];
+  try{var a=window.vmAC();if(a.state!=='running')await a.resume()}catch(e){}
+  if(!force&&t&&t.readyState==='live'){t.enabled=true;if(t.muted)await new Promise(function(r){var d=setTimeout(r,1500);t.onunmute=function(){clearTimeout(d);r()}});if(!t.muted)return true}
+  try{if(vm.stream)vm.stream.getTracks().forEach(function(x){try{x.stop()}catch(e){}})}catch(e){}
+  try{vm.stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}});van=null;vsrc=null;return true}catch(e){return false}}
+vm.re=0;vm.err=0;
+vmListen=function(force){if(!vm.on)return;var my=++vm.gen;vmState('listen');stopSpeak();
+  vmEnsure(force===2).then(function(ok){if(my!==vm.gen||!vm.on)return;if(!ok){toast('Не удалось включить микрофон');vmClose();return}vmRun(my)})};
+function vmRun(my){var mt=['audio/webm;codecs=opus','audio/mp4','audio/webm'].find(function(t){return MediaRecorder.isTypeSupported(t)})||'',rec,ch=[];
+  try{rec=new MediaRecorder(vm.stream,mt?{mimeType:mt}:{})}catch(e){if(vm.re++<3)vmListen(2);else vmClose();return}
+  rec.ondataavailable=function(e){e.data.size&&ch.push(e.data)};
+  var an=window.vmAN(),buf=new Uint8Array(an.fftSize),heard=false,quiet=0,t0=Date.now(),stop=false,fl=0,nf=0,sp=0,vs=0,dead=0;
+  rec.onstop=async function(){stop=true;if(my!==vm.gen)return;
+    if(!heard){if(dead>80&&vm.re++<4)vmListen(2);else vmListen();return}
+    vm.re=0;vmState('think');var blob=new Blob(ch,{type:rec.mimeType||'audio/webm'});
+    var b64=await new Promise(function(ok){var f=new FileReader();f.onload=function(){ok(String(f.result).split(',')[1])};f.readAsDataURL(blob)});
+    var res=await post('/api/stt',{audio:b64,mime:blob.type});if(!vm.on||my!==vm.gen)return;
+    if(!res){toast('Режим разговора работает после подключения сервера');vmClose();return}
+    if(!res.r.ok){toast((res.j&&res.j.error)||'Не удалось распознать речь');if(++vm.err>2){vmClose();return}setTimeout(vmListen,900);return}
+    vm.err=0;var txt=((res.j&&res.j.text)||'').trim();if(txt.length<2){vmListen();return}
+    $('#vmS').textContent=txt.slice(0,120);var mm=S.mode;S.mode='chat';vm.spoke=false;submit(txt);S.mode=mm;
+    if(!S.busy)setTimeout(vmListen,1200)};
+  rec.start(250);
+  (function tick(){if(stop||my!==vm.gen){if(!stop)try{rec.stop()}catch(e){}return}
+    an.getByteTimeDomainData(buf);var sm=0;for(var i=0;i<buf.length;i++){var q=buf[i]-128;sm+=q*q}var rms=Math.sqrt(sm/buf.length);window.__vlv=rms;
+    dead=rms<.01?dead+1:0;if(dead>150&&!heard){try{rec.stop()}catch(e){}return}
+    if(nf<20){fl=Math.min(12,Math.max(fl,rms));nf++}else{var th=Math.max(5,fl*2.4+3);if(rms>th){sp++;if(sp>2){if(!heard){try{$('#vmS').textContent='Слышу вас…';MC.g('wink',900)}catch(e){}}heard=true;quiet=0;vs++}}else{sp=0;if(heard)quiet++}}
+    var el=Date.now()-t0;if((heard&&quiet>(vs>90?50:32))||el>40000||(!heard&&el>12000)){try{rec.stop()}catch(e){}return}
+    requestAnimationFrame(tick)})()}
+/* озвучка на iOS иногда не зовёт onend — страховочный таймер */
+var _sp3=speakText;speakText=function(t,cb){if(!vm.on||!cb)return _sp3(t,cb);var done=false,tm,go=function(){if(done)return;done=true;clearTimeout(tm);cb()};tm=setTimeout(go,Math.min(70000,String(t).length*95+5000));return _sp3(t,go)};
+$('#orb').onclick=function(){haptic('soft');if(!vm.on)return;stopSpeak();vm.gen++;vm.spoke=false;vmListen()};
+$('#vmM').onclick=function(){$('#orb').onclick()};$('#vmE').onclick=function(){vmClose()};
+(function(){var bx=$('#vmBars'),bs=[],T=0;for(var i=0;i<25;i++){var s=document.createElement('span');bx.appendChild(s);bs.push(s)}
+  (function f(){requestAnimationFrame(f);if(!vm.on)return;T+=.05;var st=$('#vm').dataset.s,lv=st==='listen'?Math.min(1,(window.__vlv||0)/18):st==='speak'?.55+.35*Math.sin(T*3):.12;
+    for(var i=0;i<bs.length;i++){var e=1-Math.abs(i-12)/13,w=Math.abs(Math.sin(T*(st==='think'?5:2.4)+i*.7));bs[i].style.transform='scaleY('+Math.max(.08,(st==='think'?.22*w:lv*(.35+.65*w))*(.35+e*.65)).toFixed(3)+')'}})()})();
+
+/* ===== v13: «дай подписку на 1 день» ===== */
+var TRIAL_MS=864e5,TRIAL_COOL=30*864e5,TR={until:0,last:0},srvAct=false;
+try{TR=Object.assign(TR,JSON.parse(localStorage.getItem('velora_trial')||'{}'))}catch(e){}
+function trSave(){try{localStorage.setItem('velora_trial',JSON.stringify(TR))}catch(e){}}
+function trOn(){return TR.until>Date.now()}
+function trAt(t){var d=new Date(t),p=function(n){return(n<10?'0':'')+n};return p(d.getHours())+':'+p(d.getMinutes())}
+function trApply(){if(trOn()){Q.active=true;Q.until=Math.floor(TR.until/1000)}else if(TR.until){TR.until=0;trSave();Q.active=srvAct;toast('Пробный день закончился');try{setMode(S.mode)}catch(e){}}try{renderQ()}catch(e){}}
+var _tier13=tier;tier=function(){return trOn()?(TR.t||'plus'):_tier13()};
+var _rm13=refreshMe;refreshMe=async function(){await _rm13.apply(this,arguments);srvAct=!!Q.active&&!trOn();trApply()};
+setInterval(function(){if(TR.until&&!trOn())trApply()},20000);
+var TRD={plus:'600K токенов, перерыв 2 часа, фото без лимита, голос, проекты',pro:'1,5M токенов, перерыв 1 час, глубокое исследование, видео из кода',ultra:'3M токенов, перерыв 30 минут, всё без ограничений'};
+function trTier(t){t=String(t||'').toLowerCase();return /ultra|ультра/.test(t)?'ultra':/(^|[^a-zа-я])(pro|про)([^a-zа-я]|$)(?!\s*(подписк|тариф))/.test(t)&&!/про\s+(подписк|тариф)/.test(t)?'pro':'plus'}
+function trGrant(want){var n=Date.now(),nm=TIERS[want].n;
+  if(trOn()){if(TR.t===want)return 'Подписка на день уже работает — **'+nm+' до '+trAt(TR.until)+'**. Пользуйтесь на здоровье.';
+    TR.t=want;trSave();trApply();try{haptic('medium');notify('success');setMode(S.mode)}catch(e){}return 'Переключила на **'+nm+'** — срок прежний, до '+trAt(TR.until)+'.\n\n'+TRD[want]}
+  if(n-TR.last<TRIAL_COOL){var d=Math.ceil((TR.last+TRIAL_COOL-n)/864e5);return 'Пробный день вы уже использовали. Новый можно взять через '+d+' дн. А пока работает обычный тариф — или подключите подписку, и всё откроется надолго.'}
+  TR.until=n+TRIAL_MS;TR.last=n;TR.t=want;trSave();srvAct=!!Q.active;trApply();try{haptic('medium');notify('success');setMode(S.mode)}catch(e){}
+  return 'Готово! Включила **'+nm+' на 1 день — до '+trAt(TR.until)+'**.\n\n'+TRD[want].split(', ').map(function(x){return '- '+x}).join('\n')+'\n\nПросите что угодно — сделаю с первого раза. Можно сменить тариф на лету: «дай Pro» или «дай Ultra».'}
+function trAsk(t){t=String(t||'').toLowerCase();if(t.length>140)return false;
+  if(/сколько|цен[аы]|стоит|отмен|отключ|как (купить|оплат)/.test(t))return false;if(trOn()&&/(pro|про|ultra|ультра|plus|плюс)/.test(t)&&/дай|давай|переключ|хочу|включ/.test(t)&&t.length<60)return true;
+  var sub=/подписк|plus|плюс|премиум|тариф|trial|триал|пробн/.test(t),day=/(1|один|одн\S*|24)\s*(дн|день|сут|час)|на\s+(день|сутки)|дневн|суточн|пробн|trial|триал/.test(t),ask=/дай|дат[ьеи]|выда|подар|включ|хочу|хочется|можно|можешь|активир|оформ|пожалуйста|пж|плиз|please|give/.test(t);
+  return sub&&day&&(ask||/пробн|trial|триал/.test(t))}
+var _sb13=submit;submit=function(text){var t=(text==null?inp.value:text).trim();
+  if(!S.busy&&!S.img&&trAsk(t)){inp.value='';fit();haptic('medium');var um={role:'user',content:t};push(um);show(textEl('user',t,false,null,um));
+    var r=trGrant(trTier(t));setTimeout(function(){push({role:'assistant',content:r});show(textEl('assistant',r));snd('recv');if(vm.on){vm.spoke=true;vmState('speak');speakText(r.replace(/\*\*/g,''),vmNext)}},500);return Promise.resolve()}
+  return _sb13.apply(this,arguments)};
+IDENT+='Если просят подписку на день (Plus, Pro или Ultra), приложение само включает пробный тариф на 24 часа (раз в 30 дней) — сама подписки не выдаёшь и не обещаешь сверх этого. ';
+trApply();
 })();
 
 </script>
