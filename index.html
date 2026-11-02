@@ -1079,7 +1079,7 @@ function wander(o,now){if(!o.wn||now>o.wn.u){const pv=o.wn&&o.wn.n;let n;
   else{n=Math.random()<.22&&pv!=='idle'?'idle':POOL[Math.floor(Math.random()*POOL.length)];if(n===pv)n='idle'}
   o.wn={n,u:now+(DUR[n]||2400+Math.random()*2600)}}return o.wn.n}
 function stateOf(o,now){if(o.over&&now<o.ovT)return o.over;o.over=null;if(o.el._ext)return o.el._ext;if(o.g)return A.cur;let e=now-o.t0,i=0;for(;i<o.seq.length-1;i++){if(e<o.seq[i][1])break;e-=o.seq[i][1]}const n=o.seq[i][0];return n==='wander'?wander(o,now):n}
-let last=0;function loop(now){requestAnimationFrame(loop);const calm=document.documentElement.classList.contains('calm');if(document.hidden||!inst.size)return;const dt=(now-last)/1000;if(dt<(calm?1/12:1/30))return;last=now;const vh=innerHeight,h=Math.min(dt,.1);
+let last=0;function loop(now){requestAnimationFrame(loop);const calm=document.documentElement.classList.contains('calm');if(document.hidden||!inst.size)return;const dt=(now-last)/1000;if(dt<(calm?1/12:1/75))return;last=now;const vh=innerHeight,h=Math.min(dt,.1);
  inst.forEach(o=>{if(!o.el.isConnected){inst.delete(o);return}if(o.el.classList.contains('off'))return;const r=o.el.getBoundingClientRect();if(r.bottom<0||r.top>vh||!r.width)return;const tg=DEF(),sn=calm?'idle':stateOf(o,now);if(o.sn!==sn){if(o.sn==='spin'||o.sn==='flip'){['rr','rx'].forEach(k=>{let r=((o.cur[k]%(2*PI))+2*PI)%(2*PI);if(r>PI)r-=2*PI;o.cur[k]=r})}o.sn=sn;o.ss=o.t;o.el.classList.toggle('sleepy',sn==='sleep');const q=o.el.querySelector('.say');if(q&&SAY[sn]&&Math.random()<.85){q.textContent=SAY[sn][Math.floor(Math.random()*SAY[sn].length)];q.classList.remove('on');void q.offsetWidth;q.classList.add('on')}}LT=o.t-o.ss;(ST[sn]||ST.idle)(o.t+=h,tg);if(TR[sn]){tg.rr+=.55*PT.x;tg.rx+=.3*PT.y;tg.lk+=.7*PT.x;tg.lky-=.7*PT.y}K.forEach(k=>o.cur[k]+=(tg[k]-o.cur[k])*Math.min(1,h*9));skin(o.el);apply(o.cur,o.t);blit(o)})}
 const scan=r=>{if(r.nodeType!==1)return;if(r.matches('.mc'))attach(r);else r.querySelectorAll('.mc').forEach(attach)};
 new MutationObserver(m=>m.forEach(x=>x.addedNodes.forEach(scan))).observe(document.body,{childList:true,subtree:true});scan(document.body);window.__MC={ST,DUR,SAY};requestAnimationFrame(loop);
@@ -1246,6 +1246,8 @@ function bx(){var s=sb(),h=document.querySelector('header'),c=$('#composer').get
  return{x0:s.x0,x1:s.x1,y0:y0,y1:Math.max(y0,Math.min(s.y1,c.top-W+8))}}
 function put(){rm.style.translate=RM.x+'px '+RM.y+'px';rm.style.scale=RM.s;var l=RM.y<46;if(l!==lowF){lowF=l;rm.classList.toggle('low',l)}}
 function pause(ms){return new Promise(function(r){setTimeout(r,ms)})}
+async function rmGo(x,y,ms){var x0=RM.x,y0=RM.y;rest=false;window.__dir=x>x0?1:-1;rm._ext=null;return tween(ms,function(u){var e=u<.5?2*u*u:1-Math.pow(-2*u+2,2)/2;RM.x=x0+(x-x0)*e;RM.y=y0+(y-y0)*e-Math.sin(Math.PI*u)*34;put()})}
+window.RMX={get:function(){return RM},bx:bx,W:W,hold:function(ms){holdUntil=Math.max(holdUntil,performance.now()+ms)},go:rmGo,ext:function(v){rm._ext=v;window.__dir=0},rest:function(v){rest=v},gone:function(){return rm.classList.contains('gone')}};
 function wait(ms){var e=epoch;return new Promise(function(r){setTimeout(function(){r(e===epoch)},ms)})}
 function tween(ms,fn){var e=epoch;return new Promise(function(res){var t0=performance.now();(function f(n){if(e!==epoch)return res(false);var u=Math.min(1,(n-t0)/ms);fn(u);u<1?requestAnimationFrame(f):res(true)})(t0)})}
 function rx(){var b=bx();return rand(b.x0,b.x1)}
@@ -2879,7 +2881,7 @@ function trSave(){try{localStorage.setItem('velora_trial',JSON.stringify(TR))}ca
 function trOn(){return TR.until>Date.now()}
 function trAt(t){var d=new Date(t),p=function(n){return(n<10?'0':'')+n};return p(d.getHours())+':'+p(d.getMinutes())}
 function trApply(){if(trOn()){Q.active=true;Q.until=Math.floor(TR.until/1000)}else if(TR.until){TR.until=0;trSave();Q.active=srvAct;toast('Пробный день закончился');try{setMode(S.mode)}catch(e){}}try{renderQ()}catch(e){}}
-var _tier13=tier;tier=function(){return trOn()?(TR.t||'plus'):_tier13()};
+var _tier13=tier;tier=function(){return trOn()?(TR.t||'plus'):_tier13()};window.tierHook=function(f){var o=tier;tier=function(){return f()||o()}};
 var _rm13=refreshMe;refreshMe=async function(){await _rm13.apply(this,arguments);srvAct=!!Q.active&&!trOn();trApply()};
 setInterval(function(){if(TR.until&&!trOn())trApply()},20000);
 var TRD={plus:'600K токенов, перерыв 2 часа, фото без лимита, голос, проекты',pro:'1,5M токенов, перерыв 1 час, глубокое исследование, видео из кода',ultra:'3M токенов, перерыв 30 минут, всё без ограничений'};
@@ -3092,6 +3094,24 @@ button:active{transform:scale(.95)}
 #plans .plHt small{display:none}#plans .plH{padding-bottom:2px}
 .pm16{margin:6px 16px 2px;gap:6px}.sg16 button{height:32px;font-size:13px}
 .tr16{padding:9px 14px;border-radius:16px}.tr16 small{display:none}.tr16 b{font-size:14.5px}.tr16 em{white-space:nowrap;font-size:15px}
+.sl16{margin:6px 16px 0;padding:7px 12px;border-radius:14px;text-align:center;font-size:13px;color:#cfe9ff;background:rgba(124,196,255,.14);display:none}
+.msg.ai .mark{animation:v16mark .7s cubic-bezier(.3,1.5,.5,1) both}
+@keyframes v16mark{from{opacity:0;transform:scale(.3) rotate(-30deg)}to{opacity:1;transform:none}}
+/* --- ещё больше плавности --- */
+@keyframes v16me{from{opacity:0;transform:translateX(18px) scale(.94)}to{opacity:1;transform:none}}
+.msg.me{animation:v16me .5s cubic-bezier(.2,.9,.3,1.05) both}
+.hx>*,.sugg button,.quick>*{animation:v16in .6s cubic-bezier(.2,.9,.3,1.05) both}
+.hx>*:nth-child(2),.sugg button:nth-child(2){animation-delay:.06s}.hx>*:nth-child(3),.sugg button:nth-child(3){animation-delay:.12s}.hx>*:nth-child(4),.sugg button:nth-child(4){animation-delay:.18s}.hx>*:nth-child(5){animation-delay:.24s}.hx>*:nth-child(6){animation-delay:.3s}
+#hello h1,#hello .hs,#hello p{animation:v16in .8s cubic-bezier(.2,.9,.3,1.05) both}
+#title{transition:transform .35s cubic-bezier(.3,1.4,.5,1),box-shadow .4s}#title:active{transform:scale(.96)}
+#composer{transition:box-shadow .45s,transform .45s cubic-bezier(.2,.9,.3,1)}#composer:focus-within{transform:translateY(-2px);box-shadow:0 10px 40px rgba(124,196,255,.12),0 0 0 1px rgba(255,255,255,.12)}
+#vmB{position:relative}#vmB::after{content:"";position:absolute;inset:-3px;border-radius:50%;border:1.5px solid rgba(255,255,255,.28);animation:v16ring 3.2s ease-out infinite;pointer-events:none}
+@keyframes v16ring{0%{transform:scale(.92);opacity:.7}100%{transform:scale(1.35);opacity:0}}
+.cb,.tb,.ch,.dg{animation:v16in .6s cubic-bezier(.2,.9,.3,1.05) both}
+.toast{animation:v16in .45s cubic-bezier(.2,.9,.3,1.2) both}
+.rip16{position:absolute;border-radius:50%;background:rgba(255,255,255,.35);transform:scale(0);animation:v16rip .6s ease-out forwards;pointer-events:none}
+@keyframes v16rip{to{transform:scale(1);opacity:0}}
+@media (prefers-reduced-motion:reduce){.msg,.plc,.hx>*{animation:none!important}}
 .beta::after{content:" · v0.16"}
 </style>
 <div id="pa16"><canvas></canvas><div class="pa-c"><div class="pa-ring"><i class="pa-glow"></i><svg viewBox="0 0 100 100"><defs><linearGradient id="pag" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#7cc4ff"/></linearGradient></defs><circle class="tr" cx="50" cy="50" r="44"/><circle class="sp" cx="50" cy="50" r="44"/><path class="ok" d="M31 52l13 13 26-30"/></svg></div><h2 id="paT"></h2><p id="paS"></p><ul class="pa-l" id="paL"></ul><button type="button" class="pa-b" id="paB">Отлично</button></div></div>
@@ -3099,7 +3119,7 @@ button:active{transform:scale(.95)}
 (function(){
 var $=function(s){return document.querySelector(s)},sleep=function(ms){return new Promise(function(r){setTimeout(r,ms)})},hz=function(k){try{haptic(k)}catch(e){}};
 /* ===== ОПЛАТА: ЮKassa и Telegram Stars (1 ₽ = 1 ⭐) ===== */
-var M16=localStorage.getItem('velora_pm')||'rub',PR={plus:150,pro:300,ultra:500,pro_trial:1},NM={plus:'Plus',pro:'Pro',ultra:'Ultra',pro_trial:'Pro'},DY={plus:30,pro:30,ultra:30,pro_trial:3},
+var M16=localStorage.getItem('velora_pm')||'rub',PR={plus:150,pro:300,ultra:500,pro_trial:10},NM={plus:'Plus',pro:'Pro',ultra:'Ultra',pro_trial:'Pro'},DY={plus:30,pro:30,ultra:30,pro_trial:3},
 PF={plus:['600K токенов в день','Перерыв 2 часа','Фото без лимита','Голос и проекты'],pro:['1,5M токенов в день','Перерыв 1 час','Видео из кода','Глубокое исследование'],ultra:['3M токенов в день','Перерыв 30 минут','Всё без ограничений','Ранний доступ к новому']};PF.pro_trial=PF.pro;
 var DP={};try{DP=JSON.parse(localStorage.getItem('velora_dp')||'{}')}catch(e){}
 window.tierHook&&tierHook(function(){return DP.until>Date.now()?DP.t:''});
@@ -3107,9 +3127,9 @@ var _rm=refreshMe;refreshMe=async function(){await _rm.apply(this,arguments);if(
 var cur=function(p){return M16==='stars'?'⭐':'₽'};
 function paint(){var pl=$('#plans');if(!pl)return;[].forEach.call(pl.querySelectorAll('.sg16 button'),function(b){b.classList.toggle('on',b.dataset.m===M16)});
  [].forEach.call(pl.querySelectorAll('.plp b'),function(b){if(!b.dataset.o)b.dataset.o=b.textContent;b.textContent=M16==='stars'?b.dataset.o.replace('₽','⭐'):b.dataset.o});
- [].forEach.call(pl.querySelectorAll('.plcta.go'),function(b){var p=b.dataset.p;b.textContent='Купить '+(NM[p]||p)+' · '+PR[p]+' '+cur()});var t=$('#trp16');if(t)t.textContent='1 '+cur()}
+ [].forEach.call(pl.querySelectorAll('.plcta.go'),function(b){var p=b.dataset.p;if(!PR[p]){b.textContent='Бесплатный тариф';b.style.opacity='.45';b.style.pointerEvents='none';return}b.style.opacity='';b.style.pointerEvents='';b.textContent='Купить '+(NM[p]||p)+' · '+PR[p]+' '+cur()});var t=$('#trp16');if(t)t.textContent=PR.pro_trial+' '+cur()}
 var plH=document.querySelector('#plans .plH');
-if(plH){var bx=document.createElement('div');bx.className='pm16';bx.innerHTML='<div class="sg16"><button type="button" data-m="rub">₽ ЮKassa</button><button type="button" data-m="stars">⭐ Telegram Stars</button></div><button type="button" class="tr16"><span><b>Pro на 3 дня</b><small>Все возможности Pro, чтобы попробовать</small></span><em id="trp16">1 ₽</em></button>';plH.appendChild(bx);
+if(plH){var bx=document.createElement('div');bx.className='pm16';bx.innerHTML='<div class="sg16"><button type="button" data-m="rub">₽ ЮKassa</button><button type="button" data-m="stars">⭐ Telegram Stars</button></div><button type="button" class="tr16"><span><b>Pro на 3 дня</b><small>Все возможности Pro, чтобы попробовать</small></span><em id="trp16">10 ₽</em></button>';plH.appendChild(bx);
  bx.querySelector('.sg16').onclick=function(e){var b=e.target.closest('button');if(!b)return;M16=b.dataset.m;try{localStorage.setItem('velora_pm',M16)}catch(x){}hz('light');paint()};
  bx.querySelector('.tr16').onclick=function(){buy16('pro_trial')};
  try{new MutationObserver(function(){paint()}).observe($('#plans .plS'),{childList:true})}catch(e){}paint()}
@@ -3130,13 +3150,20 @@ function paDone(plan,until){pa.classList.remove('wait');pa.classList.add('done')
 async function buy16(plan){if(!PR[plan])plan='plus';var m=M16;stopP=false;paOpen(m);hz('medium');
  if(S.demo){await sleep(2300);if(stopP)return;paSet('Платёж подтверждён','Подключаем подписку…');await sleep(1100);if(stopP)return;
   DP={t:plan==='pro_trial'?'pro':plan,until:Date.now()+DY[plan]*864e5};try{localStorage.setItem('velora_dp',JSON.stringify(DP))}catch(e){}
-  Q.active=true;Q.until=Math.floor(DP.until/1000);try{renderQ()}catch(e){}try{setMode(S.mode)}catch(e){}paDone(plan,DP.until);return}
+  Q.active=true;Q.until=Math.floor(DP.until/1000);try{renderQ()}catch(e){}try{setMode(S.mode)}catch(e){}sl();paDone(plan,DP.until);return}
  var res=await post('/api/pay',{plan:plan,method:m,amount:PR[plan]});
  if(stopP)return;if(!res||!res.r.ok||!(res.j.url||res.j.invoice)){paClose();toast((res&&res.j&&res.j.error)||'Не удалось открыть оплату');return}
  var ok=async function(){await refreshMe();if(Q.active&&!stopP){stopP=true;paDone(plan,(Q.until||Date.now()/1000+DY[plan]*86400)*1000)}};
  var poll=function(n){var t0=Date.now(),iv=setInterval(async function(){if(stopP||Date.now()-t0>(n||600000)){clearInterval(iv);return}await ok();if(stopP)clearInterval(iv)},3000)};
  if(m==='stars'&&tg&&tg.openInvoice){paSet('Подтвердите в Telegram','Оплата звёздами откроется поверх приложения');tg.openInvoice(res.j.invoice||res.j.url,function(st){if(st==='paid'){paSet('Платёж принят','Подключаем подписку…');poll(90000);ok()}else if(st==='cancelled'||st==='failed')paClose()})}
  else{paSet('Завершите оплату','Откроется страница ЮKassa. После оплаты вернитесь сюда');(tg&&tg.openLink)?tg.openLink(res.j.url||res.j.invoice):window.open(res.j.url||res.j.invoice,'_blank');poll()}}
+/* сколько осталось до конца подписки */
+function left16(){var u=Q&&Q.active&&Q.until;if(!u)return'';u=u>1e12?u:u*1000;var ms=u-Date.now();if(ms<=0)return'';var d=Math.floor(ms/864e5),h=Math.floor(ms%864e5/36e5),m=Math.floor(ms%36e5/6e4);return d?d+' д '+h+' ч':h?h+' ч '+m+' мин':Math.max(1,m)+' мин'}
+function deco(el){if(!el)return;var t=el.textContent.replace(/ · ⏳ .*$/,''),l=left16();if(l&&el.textContent!==t+' · ⏳ '+l){el.__d=1;el.textContent=t+' · ⏳ '+l}else if(!l&&el.textContent!==t)el.textContent=t}
+function sl(){var l=left16(),b=$('#sl16');if(b){b.textContent=l?'⏳ Подписка активна · осталось '+l:'';b.style.display=l?'block':'none'}deco($('#planS'));deco($('#foot'))}
+var plH2=document.querySelector('#plans .plH');if(plH2){var s16=document.createElement('div');s16.id='sl16';s16.className='sl16';plH2.insertBefore(s16,plH2.querySelector('.pm16'))}
+['#planS','#foot'].forEach(function(q){var e=$(q);if(e)try{new MutationObserver(function(){if(e.__d){e.__d=0;return}deco(e)}).observe(e,{childList:true,characterData:true,subtree:true})}catch(x){}});
+setInterval(sl,30000);setTimeout(sl,1500);
 window.buy16=buy16;pay=function(){buy16('plus')};try{$('#pay').onclick=pay}catch(e){}
 /* ===== ГОЛОС: один цикл прослушивания, без гонок ===== */
 var VL={busy:false,err:0},mm=$('#vmM2');window.VL16=VL;
@@ -3178,8 +3205,20 @@ window.fetch=function(u,o){try{if(typeof u==='string'&&u.indexOf('/api/tts')>-1&
 browserSpeak=function(t,cb){if(!('speechSynthesis' in window)){cb&&cb();return}try{var q=new SpeechSynthesisUtterance(t),ru=/[а-яё]/i.test(t),vs=speechSynthesis.getVoices().filter(function(v){return v.lang&&v.lang.toLowerCase().indexOf(ru?'ru':'en')===0}),
  sc=function(v){return(/milena|alena|alyona|katya|irina|siri|premium|enhanced|natural|google/i.test(v.name)?2:0)+(/yuri|pavel|male|maxim/i.test(v.name)?-3:0)};
  vs.sort(function(a,b){return sc(b)-sc(a)});if(vs[0])q.voice=vs[0];q.lang=ru?'ru-RU':'en-US';q.rate=+P.vrate||1;q.pitch=1.1;q.onend=q.onerror=function(){cb&&cb()};speechSynthesis.speak(q)}catch(e){cb&&cb()}};
+
+/* ===== зелёный маскот внизу спокойно уходит в угол и «говорит» ответ ===== */
+var sp16=0;
+function speak16(msg){var X=window.RMX;if(!X||X.gone())return;var N=msg.querySelectorAll('.txt .w').length;if(!N||N>260)return;
+ var T=Math.min(N*32,2200)+900,my=++sp16,R=X.get(),hx=R.x,b=X.bx(),cx=Math.max(6,innerWidth-X.W-8),fy=b.y1;X.hold(T+4800);
+ X.go(cx,fy,900).then(function(ok){if(!ok||my!==sp16)return;X.ext('speak');
+  setTimeout(function(){if(my!==sp16)return;X.ext('happy');
+   setTimeout(function(){if(my!==sp16)return;X.ext(null);X.go(hx,X.bx().y1,1000).then(function(){if(my===sp16){X.rest(true)}})},1100)},T)})}
+var _sh16=show;show=function(el){var r=_sh16(el);try{if(el&&el.classList&&el.classList.contains('ai')&&!el.classList.contains('still')&&el.querySelector('.txt .w')&&S.busy&&!vm.on)speak16(el)}catch(e){}return r};
+/* волна нажатия на кнопках */
+document.addEventListener('pointerdown',function(e){var b=e.target.closest&&e.target.closest('.rb,.plcta,.pa-b,.sg16 button,.tr16,#send');if(!b)return;var r=b.getBoundingClientRect(),d=Math.max(r.width,r.height)*1.6,x=document.createElement('i');x.className='rip16';x.style.cssText='width:'+d+'px;height:'+d+'px;left:'+(e.clientX-r.left-d/2)+'px;top:'+(e.clientY-r.top-d/2)+'px';
+ if(getComputedStyle(b).position==='static')b.style.position='relative';b.style.overflow='hidden';b.appendChild(x);setTimeout(function(){x.remove()},650)},{passive:true});
 /* ===== Velora знает приложение ===== */
-window.RICH_HINT=(window.RICH_HINT||'')+' ПРИЛОЖЕНИЕ: ты работаешь внутри Telegram мини-приложения Velora Ai (версия 0.16) и знаешь его интерфейс. Шапка: слева меню, по центру название чата с меткой беты, справа «+» новый чат. Меню: Создать фото, Создать видео, Изменить фото, Проекты, Настройки (профиль, тон, длина ответа, роль, голос), поиск по чатам, Недавние, Экспорт чата, звук, карточка тарифа с кнопкой See plans. В поле ввода: «+» (камера, фото, файл; формат, стиль и длительность для фото и видео), кнопка голоса (волна) и отправка. Голос: нажатие на волну, Velora вылетает в правый угол чата и говорит, в чате остаются только картинки, видео, код, таблицы; тап по Velora завершает разговор. Код ```html (игры, анимации) показывается карточкой «Запустить» на весь экран, оттуда можно записать видео. Есть графики, таблицы, формулы, схемы, память, проекты. Тарифы: Free 40K токенов в день, перерыв 3 ч; Plus 150 ₽; Pro 300 ₽; Ultra 500 ₽. Оплата через ЮKassa или Telegram Stars, 1 ₽ = 1 ⭐. Есть пробный Pro на 3 дня за 1 ₽ (карточка тарифа → See plans → вверху). Про приложение отвечай уверенно и по делу, подсказывай, где нажать.';
+window.RICH_HINT=(window.RICH_HINT||'')+' ПРИЛОЖЕНИЕ: ты работаешь внутри Telegram мини-приложения Velora Ai (версия 0.16) и знаешь его интерфейс. Шапка: слева меню, по центру название чата с меткой беты, справа «+» новый чат. Меню: Создать фото, Создать видео, Изменить фото, Проекты, Настройки (профиль, тон, длина ответа, роль, голос), поиск по чатам, Недавние, Экспорт чата, звук, карточка тарифа с кнопкой See plans. В поле ввода: «+» (камера, фото, файл; формат, стиль и длительность для фото и видео), кнопка голоса (волна) и отправка. Голос: нажатие на волну, Velora вылетает в правый угол чата и говорит, в чате остаются только картинки, видео, код, таблицы; тап по Velora завершает разговор. Код ```html (игры, анимации) показывается карточкой «Запустить» на весь экран, оттуда можно записать видео. Есть графики, таблицы, формулы, схемы, память, проекты. Тарифы: Free 40K токенов в день, перерыв 3 ч; Plus 150 ₽; Pro 300 ₽; Ultra 500 ₽. Оплата через ЮKassa или Telegram Stars, 1 ₽ = 1 ⭐. Есть пробный Pro на 3 дня за 10 ₽ (или 10 ⭐) (карточка тарифа → See plans → вверху). Про приложение отвечай уверенно и по делу, подсказывай, где нажать.';
 })();
 </script>
 </body>
