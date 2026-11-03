@@ -108,9 +108,30 @@ PLANS = {
                   "title": "Velora Pro · 3 дня", "desc": "Пробный Pro на 3 дня"},
 }
 
+_INVIS = dict.fromkeys(map(ord, "\u200b\u200c\u200d\u2060\ufeff\u00a0\u202f\u2009\u200a"), None)
+_QUOTES = {ord(c): '"' for c in "\u201c\u201d\u201e\u00ab\u00bb"}
+_QUOTES.update({ord(c): "'" for c in "\u2018\u2019\u201a"})
+_QUOTES.update({ord(c): "-" for c in "\u2010\u2011\u2012\u2013\u2014\u2212"})
+
+
+def _env_clean(v: str) -> str:
+    """Чистим значение из Render: невидимые символы, умные кавычки, пробелы и кавычки по краям."""
+    return (v or "").translate(_INVIS).translate(_QUOTES).strip().strip("\"'").strip()
+
+
+def _bad_chars(name: str, v: str) -> str:
+    import unicodedata
+    for i, ch in enumerate(v):
+        if ord(ch) > 126 or ord(ch) < 33:
+            return (f"В {name} на позиции {i + 1} недопустимый символ «{ch}» ({unicodedata.name(ch, 'без имени')}). "
+                    "Скорее всего, русская буква, похожая на латинскую, или лишний знак. "
+                    "Удалите значение в Render и вставьте ключ заново прямо из кабинета ЮKassa (кнопка «Скопировать»).")
+    return ""
+
+
 YK_API = os.getenv("YK_API", "https://api.yookassa.ru/v3").strip().rstrip("/")
-YK_SHOP = (os.getenv("YOOKASSA_SHOP_ID", "1513722") or "").strip()
-YK_KEY = (os.getenv("YOOKASSA_SECRET_KEY") or os.getenv("YOOKASSA_SECRET", "")).strip().strip('"').strip("'")
+YK_SHOP = _env_clean(os.getenv("YOOKASSA_SHOP_ID", "1513722"))
+YK_KEY = _env_clean(os.getenv("YOOKASSA_SECRET_KEY") or os.getenv("YOOKASSA_SECRET", ""))
 YK_RETURN = (os.getenv("YOOKASSA_RETURN_URL", "") or "").strip()
 YK_EMAIL = (os.getenv("YOOKASSA_RECEIPT_EMAIL") or os.getenv("YK_RECEIPT_EMAIL", "")).strip()
 YK_TAX = (os.getenv("YOOKASSA_TAX_SYSTEM", "") or "").strip()  # 1..6, только если у магазина несколько систем налогообложения
@@ -259,7 +280,14 @@ def paywall():
     return jsonify(error="Бесплатные запросы закончились", paywall=True), 402
 
 
+def yk_creds_problem() -> str:
+    return _bad_chars("YOOKASSA_SHOP_ID", YK_SHOP) or _bad_chars("YOOKASSA_SECRET_KEY", YK_KEY)
+
+
 def yk(method: str, path: str, body=None):
+    bad = yk_creds_problem()
+    if bad:
+        raise RuntimeError(bad)
     r = requests.request(method, YK_API + path, json=body, auth=(YK_SHOP, YK_KEY),
                          headers={"Idempotence-Key": uuid.uuid4().hex}, timeout=30)
     if r.status_code >= 400:
@@ -1069,6 +1097,9 @@ def yk_check():
            "receipt_email_set": bool(YK_EMAIL), "mock": MOCK}
     if not (YK_SHOP and YK_KEY):
         out["problem"] = "Не заданы YOOKASSA_SHOP_ID или YOOKASSA_SECRET_KEY"
+        return jsonify(out)
+    if yk_creds_problem():
+        out.update(auth="не проверялась", problem=yk_creds_problem())
         return jsonify(out)
     try:
         d = yk_me(force=True)
