@@ -11,7 +11,9 @@
   YOOKASSA_SECRET_KEY       секретный ключ ЮKassa. Только в переменных окружения, не в коде
   и ключ нейросети: GEMINI_API_KEY или OPENROUTER_API_KEY (или LLM_API_URL / LLM_API_KEY / LLM_MODEL)
 
-ЦЕНЫ: таблица PRICES в этом файле (сейчас везде 1 ₽ и 1 ⭐). Переменные в Render для цен не нужны.
+ЦЕНЫ: таблица PRICES в этом файле (сейчас везде 1 ₽ и 1 ⭐; ключ "mascot" это цена любого маскота из магазина).
+МАГАЗИН МАСКОТОВ: POST /api/pay {"item":"murz","method":"yookassa"|"stars"} создаёт платёж, GET /api/shop/me отдаёт купленных.
+  Покупка записывается в таблицу owned только после подтверждения оплаты (вебхук ЮKassa / успешный платёж Stars).
 
 ХРАНЕНИЕ (на Render без диска всё стирается при деплое: подписки пропадут)
   DB_PATH=/var/data/velora.db   MEDIA_DIR=/var/data/media   (Disk с Mount Path /var/data)
@@ -105,7 +107,8 @@ WINDOW = 3 * 3600
 PRICES = {"plus":      (1, 1),
           "pro":       (1, 1),
           "ultra":     (1, 1),
-          "pro_trial": (1, 1)}   # пробный Pro на 3 дня
+          "pro_trial": (1, 1),   # пробный Pro на 3 дня
+          "mascot":    (1, 1)}   # любой платный маскот из магазина (покупка навсегда)
 # ===========================================================================================================
 
 PLANS = {
@@ -118,6 +121,22 @@ PLANS = {
     "pro_trial": {"days": 3, "grant": "pro", "rub": PRICES["pro_trial"][0], "stars": PRICES["pro_trial"][1],
                   "title": "Velora Pro · 3 дня", "desc": "Пробный Pro на 3 дня"},
 }
+
+# Маскоты магазина: id совпадают с id в магазине приложения. silver и mint бесплатные, их тут нет.
+MASCOTS = {"murz": "Мурз", "orbit": "Орбит", "boo": "Бу", "ogon": "Огонёк",
+           "kleshnya": "Клешня", "bit": "Сэр Бит", "ten": "Тень", "donut": "Донат"}
+
+
+def product(key):
+    """Подписка (PLANS) или маскот ('mascot:<id>') -> описание товара; None, если такого нет."""
+    if key in PLANS:
+        return PLANS[key]
+    if isinstance(key, str) and key.startswith("mascot:") and key[7:] in MASCOTS:
+        n = MASCOTS[key[7:]]
+        return {"days": 0, "grant": "", "rub": PRICES["mascot"][0], "stars": PRICES["mascot"][1],
+                "title": f"Маскот {n}", "desc": f"Маскот {n} для Velora, покупка навсегда"}
+    return None
+
 
 _INVIS = dict.fromkeys(map(ord, "\u200b\u200c\u200d\u2060\ufeff\u00a0\u202f\u2009\u200a"), None)
 _QUOTES = {ord(c): '"' for c in "\u201c\u201d\u201e\u00ab\u00bb"}
@@ -166,6 +185,7 @@ db.executescript("""
 create table if not exists users(uid text primary key, used int default 0, until real default 0);
 create table if not exists pays(id text primary key, uid text, status text, t real);
 create table if not exists beta(uid text primary key);
+create table if not exists owned(uid text, item text, t real, primary key(uid, item));
 """)
 for _sql in ("alter table users add column lk real default 0",
              "alter table users add column plan text default ''",
@@ -343,11 +363,11 @@ def yk_err(e: "requests.HTTPError") -> tuple:
 
 def yk_create(u: str, plan: str, ret: str) -> dict:
     """Создаёт платёж. Чек добавляется, только если его требует магазин; при ошибке про чек пробуем наоборот."""
-    p = PLANS[plan]
+    p = product(plan)
     val = f"{p['rub']}.00"
     base = {"amount": {"value": val, "currency": "RUB"}, "capture": True,
             "confirmation": {"type": "redirect", "return_url": ret},
-            "description": f"{p['title']} · {p['days']} дн.", "metadata": {"uid": u, "plan": plan}}
+            "description": f"{p['title']} · {p['days']} дн." if p["days"] else p["title"], "metadata": {"uid": u, "plan": plan}}
 
     def body(with_receipt: bool) -> dict:
         b = dict(base)
@@ -388,8 +408,8 @@ def sub_of(u: str) -> dict:
 
 
 def grant(pid: str, u: str, plan: str, amount: int = 0, method: str = "") -> bool:
-    """Выдаёт подписку один раз на платёж pid. True, если выдана именно сейчас."""
-    p = PLANS[plan]
+    """Выдаёт покупку (подписку или маскота) один раз на платёж pid. True, если выдана именно сейчас."""
+    p = product(plan)
     with lock:
         r = db.execute("select status from pays where id=?", (pid,)).fetchone()
         if r and r[0] == "paid":
@@ -399,11 +419,29 @@ def grant(pid: str, u: str, plan: str, amount: int = 0, method: str = "") -> boo
         else:
             db.execute("insert into pays(id,uid,status,t,plan,amount,method) values(?,?,?,?,?,?,?)",
                        (pid, u, "paid", time.time(), plan, amount, method))
-        db.execute("insert or ignore into users(uid) values(?)", (u,))
-        until = db.execute("select until from users where uid=?", (u,)).fetchone()[0] or 0
-        db.execute("update users set until=?, plan=? where uid=?", (max(time.time(), until) + p["days"] * 86400, p["grant"], u))
+        if plan.startswith("mascot:"):
+            db.execute("insert or ignore into owned(uid,item,t) values(?,?,?)", (u, plan[7:], time.time()))
+        else:
+            db.execute("insert or ignore into users(uid) values(?)", (u,))
+            until = db.execute("select until from users where uid=?", (u,)).fetchone()[0] or 0
+            db.execute("update users set until=?, plan=? where uid=?",
+                       (max(time.time(), until) + p["days"] * 86400, p["grant"], u))
         db.commit()
     return True
+
+
+def owned_items(u: str) -> list:
+    with lock:
+        return [r[0] for r in db.execute("select item from owned where uid=?", (u,)).fetchall()]
+
+
+def purchase_blocked(u: str, plan: str) -> str:
+    """Пустая строка, если покупать можно; иначе причина."""
+    if plan == "pro_trial":
+        return trial_blocked(u)
+    if plan.startswith("mascot:") and plan[7:] in owned_items(u):
+        return "Этот маскот уже куплен"
+    return ""
 
 
 def trial_blocked(u: str) -> str:
@@ -418,12 +456,12 @@ def sync(pid: str):
     """Спрашиваем у ЮKassa настоящий статус платежа: вебхук подделать нельзя, мы ему не верим."""
     with lock:
         r = db.execute("select uid, plan, status from pays where id=?", (pid,)).fetchone()
-    if not r or MOCK or r[2] == "paid" or r[1] not in PLANS:
+    if not r or MOCK or r[2] == "paid" or not product(r[1]):
         return
     p = yk("GET", "/payments/" + pid)
     if p.get("status") == "succeeded" and p.get("paid"):
         am = p.get("amount") or {}
-        if am.get("currency") != "RUB" or float(am.get("value", 0)) + 0.001 < PLANS[r[1]]["rub"]:
+        if am.get("currency") != "RUB" or float(am.get("value", 0)) + 0.001 < product(r[1])["rub"]:
             print("ЮKassa: сумма не совпадает с тарифом, подписка не выдана:", pid, am)
             return
         grant(pid, r[0], r[1], int(float(am["value"])), "yookassa")
@@ -450,7 +488,7 @@ ALLOWED = ["message", "pre_checkout_query"]
 
 
 def stars_invoice(u: str, plan: str) -> str:
-    p = PLANS[plan]
+    p = product(plan)
     res = tg("createInvoiceLink", title=p["title"], description=p["desc"],
              payload=json.dumps({"u": u, "p": plan}), provider_token="", currency="XTR",
              prices=[{"label": p["title"], "amount": p["stars"]}])
@@ -463,7 +501,7 @@ def stars_payload(raw):
     """(uid, plan) из payload нашего счёта или None."""
     try:
         pl = json.loads(raw)
-        if pl.get("p") in PLANS and str(pl.get("u", "")).startswith("tg:"):
+        if product(str(pl.get("p", ""))) and str(pl.get("u", "")).startswith("tg:"):
             return str(pl["u"]), pl["p"]
     except Exception:  # noqa: BLE001
         pass
@@ -479,7 +517,7 @@ def handle_payment(upd: dict):
     q = upd.get("pre_checkout_query")
     if q:
         pl = stars_payload(q.get("invoice_payload", ""))
-        ok = bool(pl) and q.get("currency") == "XTR" and q.get("total_amount") == PLANS[pl[1]]["stars"]
+        ok = bool(pl) and q.get("currency") == "XTR" and q.get("total_amount") == product(pl[1])["stars"]
         a = {"pre_checkout_query_id": q["id"], "ok": ok}
         if not ok:
             a["error_message"] = "Не удалось проверить счёт, попробуйте ещё раз"
@@ -497,19 +535,27 @@ def handle_payment(upd: dict):
         return
     u, plan = pl
     paid = int(sp.get("total_amount", 0))
-    if paid < PLANS[plan]["stars"]:
-        print(f"Stars: оплачено {paid} вместо {PLANS[plan]['stars']} за {plan}, user {u}, подписка НЕ выдана:",
+    if paid < product(plan)["stars"]:
+        print(f"Stars: оплачено {paid} вместо {product(plan)['stars']} за {plan}, user {u}, покупка НЕ выдана:",
               sp.get("telegram_payment_charge_id"))
         return
     if grant("tg:" + (sp.get("telegram_payment_charge_id") or uuid.uuid4().hex), u, plan, paid, "stars"):
         try:
             tg("sendMessage", chat_id=(m.get("chat") or {}).get("id") or u[3:],
-               text="Оплата прошла ⭐ Подписка подключена. Вернитесь в приложение.")
+               text=("Оплата прошла ⭐ Маскот ваш. Вернитесь в приложение." if plan.startswith("mascot:")
+                     else "Оплата прошла ⭐ Подписка подключена. Вернитесь в приложение."))
         except Exception:  # noqa: BLE001
             pass
 
 
 # ---------- нейросеть чата ----------
+def wants_code(msgs) -> bool:
+    last = (msgs[-1].get("content") if msgs else "") or ""
+    if not isinstance(last, str):
+        last = " ".join(str(i.get("text", "")) for i in last if isinstance(i, dict))
+    return bool(re.search(r"игр|game|видео|video|анимац|canvas|html|сайт|скрипт|код|исправ|ошибк|script", last, re.I))
+
+
 def gemini_chat(msgs, system, max_tokens) -> str:
     model = LLM_MODEL if "gemini" in LLM_MODEL else "gemini-2.5-flash"
     contents = []
@@ -529,8 +575,8 @@ def gemini_chat(msgs, system, max_tokens) -> str:
         if parts:
             contents.append({"role": "model" if m.get("role") == "assistant" else "user", "parts": parts})
     gen = {"temperature": 0.8, "maxOutputTokens": min(max(max_tokens, 400), 65000)}
-    if "flash" in model:
-        gen["thinkingConfig"] = {"thinkingBudget": 0}
+    if "flash" in model:  # для кода, игр и исправлений нейросеть сначала обдумывает решение: меньше ошибок
+        gen["thinkingConfig"] = {"thinkingBudget": 8192 if wants_code(msgs) else 0}
     out, t0 = "", time.time()
     for _ in range(LLM_CONT + 1):
         r = requests.post(
@@ -985,10 +1031,8 @@ def unlock():
     return jsonify(sid=sid)
 
 
-@app.get("/api/me")
-def me():
-    check_access()
-    u = uid()
+def sync_pending(u: str):
+    """Догоняем платежи ЮKassa, по которым вебхук мог не дойти."""
     with lock:
         pend = db.execute("select id from pays where uid=? and status='pending' and method='yookassa' and t>?",
                           (u, time.time() - 7200)).fetchall()
@@ -997,11 +1041,29 @@ def me():
             sync(pid)
         except Exception as e:  # noqa: BLE001
             print("sync:", type(e).__name__, str(e)[:200])
+
+
+@app.get("/api/shop/me")
+def shop_me():
+    """Магазин: какие маскоты куплены (источник правды: сервер) и сколько стоит маскот."""
+    check_access()
+    u = uid()
+    sync_pending(u)
+    m = product("mascot:murz")
+    return jsonify(owned=owned_items(u), price={"rub": m["rub"], "stars": m["stars"]})
+
+
+@app.get("/api/me")
+def me():
+    check_access()
+    u = uid()
+    sync_pending(u)
     used, _, lk = row(u)
     s = sub_of(u)
     return jsonify(free_total=FREE, used=min(used, FREE), beta=UNLIMITED, active=UNLIMITED or s["active"],
                    paid=s["active"], plan=s["plan"], sub_until=s["sub_until"], price=PLANS["plus"]["rub"], reset=lk,
-                   prices={k: {"rub": v["rub"], "stars": v["stars"]} for k, v in PLANS.items()})
+                   prices={k: {"rub": v["rub"], "stars": v["stars"]} for k, v in PLANS.items()},
+                   mascot_price={"rub": PRICES["mascot"][0], "stars": PRICES["mascot"][1]})
 
 
 def stars_pay(u: str, plan: str):
@@ -1009,7 +1071,7 @@ def stars_pay(u: str, plan: str):
         return jsonify(error="На сервере не задан BOT_TOKEN"), 503
     if not u.startswith("tg:"):
         return jsonify(error="Звёзды работают только внутри Telegram"), 400
-    why = trial_blocked(u) if plan == "pro_trial" else ""
+    why = purchase_blocked(u, plan)
     if why:
         return jsonify(error=why), 400
     try:
@@ -1020,6 +1082,9 @@ def stars_pay(u: str, plan: str):
 
 
 def _plan_of(body: dict) -> str:
+    it = body.get("item")  # покупка маскота из магазина: {"item": "murz"}
+    if isinstance(it, str) and it in MASCOTS:
+        return "mascot:" + it
     return body.get("plan") if body.get("plan") in PLANS else "plus"
 
 
@@ -1043,9 +1108,10 @@ def pay():
     plan = _plan_of(body)
     if body.get("method") == "stars":
         return stars_pay(u, plan)
-    p = PLANS[plan]
-    if plan == "pro_trial" and trial_blocked(u):
-        return jsonify(error=trial_blocked(u)), 400
+    p = product(plan)
+    why = purchase_blocked(u, plan)
+    if why:
+        return jsonify(error=why), 400
     if MOCK:
         pid = "mock" + uuid.uuid4().hex[:8]
         url = request.host_url + "api/mock-pay/" + pid
@@ -1079,7 +1145,7 @@ def mock_pay(pid):
         r = db.execute("select uid, plan from pays where id=?", (pid,)).fetchone()
     if not MOCK or not r:
         abort(404)
-    grant(pid, r[0], r[1] if r[1] in PLANS else "plus", 0, "mock")
+    grant(pid, r[0], r[1] if product(r[1]) else "plus", 0, "mock")
     return ("<meta name=viewport content='width=device-width'><body style='background:#09090b;color:#eee;"
             "font-family:sans-serif;display:grid;place-items:center;height:100vh;text-align:center'>"
             "Тестовая оплата прошла. Вернитесь в приложение.")
