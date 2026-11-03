@@ -524,7 +524,7 @@ html.dr .app{transform:translateX(var(--dw)) scale(.97);border-radius:46px;box-s
 <section class="sheet gl" id="sheet"><i class="grab"></i><button class="gl rb sm" id="sheetX" aria-label="Закрыть"><svg class="ic" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
 <svg class="mark"><use href="#mk"/></svg><h3>Velora без границ</h3><p id="shS"></p>
 <ul class="perks"><li><svg class="ic" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Безлимитный чат</li><li><svg class="ic" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Фото и видео по описанию</li><li><svg class="ic" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Распознавание по фото</li></ul>
-<button class="cta" id="pay">Оплатить 150 ₽ за месяц</button><small>Безопасная оплата через ЮKassa</small></section>
+<button class="cta" id="pay">Оплатить 1 ₽ за месяц</button><small>Безопасная оплата через ЮKassa</small></section>
 
 <section class="set gl" id="set"><div class="top"><h3>Профиль и настройки</h3><button class="gl rb sm" id="setX" aria-label="Закрыть"><svg class="ic" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div><div class="sc" id="setc"></div></section>
 <div class="cam" id="cam" hidden><video id="camV" playsinline autoplay muted></video>
@@ -828,7 +828,7 @@ async function generate(kind,prompt,viaChat,ticket,photo){
 
 /* ---------- лимиты и оплата ---------- */
 const anon=(()=>{try{let a=localStorage.getItem('velora_anon');if(!a){a=Math.random().toString(36).slice(2,12);localStorage.setItem('velora_anon',a)}return a}catch(e){return'x'}})();
-const Q={total:10,used:0,active:false,until:0,price:150,reset:0,beta:true};
+const Q={total:10,used:0,active:false,until:0,price:1,reset:0,beta:true};
 try{Q.used=+localStorage.getItem('velora_used')||0;Q.reset=+localStorage.getItem('velora_reset')||0}catch(e){}
 function tick(){if(Q.used>0&&Q.reset&&Date.now()/1000>=Q.reset){Q.used=0;Q.reset=0;try{localStorage.setItem('velora_used',0);localStorage.setItem('velora_reset',0)}catch(e){}}}
 const nextWin=()=>(Math.floor(Date.now()/10800000)+1)*10800;
@@ -2640,9 +2640,9 @@ setInterval(function(){tokTick();paintBreak();renderQ()},1000);paintBreak();rend
 var PLANS=[
  {id:'free',name:'Free',price:'0 ₽',per:'/ month',tag:'Start for free',big:'40K',unit:'tokens per day',pct:.1,
   feat:['40K virtual tokens per day','3-hour break when tokens run out','Velora Fast model','3 photo recognitions per day','2 image creations per day','Files, tables, charts, code and formulas','5 memory notes · 1 project']},
- {id:'plus',name:'Plus',price:'150 ₽',per:'/ month',tag:'For everyday power',big:'600K',unit:'tokens per day',pct:.5,
+ {id:'plus',name:'Plus',price:'1 ₽',per:'/ month',tag:'For everyday power',big:'600K',unit:'tokens per day',pct:.5,
   feat:['Everything in Free','600K virtual tokens per day','Shorter 2-hour breaks','Unlimited photo recognition','Velora Smart and Code models','40 image creations per day','Up to 6 files per message','Live HTML Studio with editable preview','Unlimited memory · 10 projects']},
- {id:'ultra',name:'Ultra',price:'500 ₽',per:'/ month',tag:'No limits on creativity',big:'3M',unit:'tokens per day',pct:1,
+ {id:'ultra',name:'Ultra',price:'1 ₽',per:'/ month',tag:'No limits on creativity',big:'3M',unit:'tokens per day',pct:1,
   feat:['Everything in Plus','3M virtual tokens per day','Only 30-minute breaks','Unlimited photo recognition, priority queue','Deep research mode with a full report','Video creation up to 8 seconds','Velora Max model','Unlimited projects with project files','Early access to new features']}];
 var pl=el('section','plans');pl.id='plans';pl.setAttribute('role','dialog');pl.setAttribute('aria-modal','true');pl.setAttribute('aria-label','Plans');pl.setAttribute('aria-hidden','true');
 pl.innerHTML='<div class="plH"><i class="grab"></i><div class="plHt"><b>Выберите тариф</b><small>Листайте вниз — там все тарифы</small></div><button type="button" class="gl rb sm plX" aria-label="Close">'+ic(IP.x,14)+'</button></div><div class="plS"></div><div class="plD"></div>';
@@ -2705,7 +2705,7 @@ P('free').feat=['40K virtual tokens per day','3-hour break when tokens run out',
 P('plus').feat=['Everything in Free','600K virtual tokens per day','Shorter 2-hour breaks','Unlimited photo recognition','Velora Smart and Code models','Live projects: files, goals, 10 projects','Voice AI with interruption','AI Studio: live preview, design edits, download','Memory map: see and manage what Velora remembers','40 image creations per day'];
 P('ultra').feat=['Everything in Plus','3M virtual tokens per day','Only 30-minute breaks','Priority queue for photo recognition','Deep research with a full cited report','Video creation, plus code-to-video as a backup way','Velora Max model','Unlimited projects with project files','Early access to new features'];
 
-PLANS.splice(2,0,{id:'pro',name:'Pro',price:'300 ₽',per:'/ month',tag:'For creators and developers',big:'1.5M',unit:'tokens per day',pct:.5,
+PLANS.splice(2,0,{id:'pro',name:'Pro',price:'1 ₽',per:'/ month',tag:'For creators and developers',big:'1.5M',unit:'tokens per day',pct:.5,
  feat:['Everything in Plus','1.5M virtual tokens per day','Short 1-hour breaks','Priority queue for photo recognition','Deep research with cited reports (10 per day)','Code-to-video: record canvas animations as files','AI Studio: project export and download','100 image creations per day','Velora Max model (limited)']});
 P('plus').pct=.2;
 P('ultra').feat=['Everything in Pro','3M virtual tokens per day','Only 30-minute breaks','Unlimited deep research','Real video creation from text (server)','Velora Max model without limits','Unlimited projects with project files','Highest priority queue','Early access to new features'];
@@ -2777,10 +2777,10 @@ P('pro').feat=P('pro').feat.map(function(f){return f==='Velora Max model (limite
 /* умное определение конца фразы */
 
 /* ===== v9: личность Velora, красивый предпросмотр, проекты ===== */
-var IDENT='Ты — Velora, ИИ-ассистент (Telegram-мини-приложение, закрытая бета). Создатель — разработчик malchicismayami; другого о нём не знаешь, не выдумывай. Не называй себя ChatGPT или Claude; про модель внутри скажи, что не знаешь точно. Умеешь: чат, фото и видео, распознавание по фото, таблицы, графики, формулы, схемы, SVG, живой код (HTML/JS/CSS, игры), голос, проекты, память. Тарифы: Free 40K токенов/день, перерыв 3 ч; Plus 150 ₽; Pro 300 ₽; Ultra 500 ₽. Глубокое исследование и карта памяти ещё в разработке. ';
+var IDENT='Ты — Velora, ИИ-ассистент (Telegram-мини-приложение, закрытая бета). Создатель — разработчик malchicismayami; другого о нём не знаешь, не выдумывай. Не называй себя ChatGPT или Claude; про модель внутри скажи, что не знаешь точно. Умеешь: чат, фото и видео, распознавание по фото, таблицы, графики, формулы, схемы, SVG, живой код (HTML/JS/CSS, игры), голос, проекты, память. Тарифы: Free 40K токенов/день, перерыв 3 ч; Plus 1 ₽; Pro 1 ₽; Ultra 1 ₽. Глубокое исследование и карта памяти ещё в разработке. ';
 var _pt2=profileText;profileText=function(){return (RICH2+IDENT+_pt2.apply(this,arguments)).slice(0,3400)};
 var ID_A={who:'Я Velora — ИИ-ассистент и мини-приложение в Telegram, сейчас в закрытой бете. Меня сделал разработчик с ником **malchicismayami**. Умею чат, фото и видео, распознавание по фото, таблицы, графики, формулы, код с живым примером, голосовой режим, проекты и память.',
-  plans:'Тарифы Velora:\n\n- **Free** — 40K токенов в день, перерыв 3 часа\n- **Plus, 150 ₽** — 600K токенов, перерыв 2 часа, безлимит фото, голос, проекты\n- **Pro, 300 ₽** — 1,5M токенов, перерыв 1 час, глубокое исследование, видео из кода\n- **Ultra, 500 ₽** — 3M токенов, перерыв 30 минут, всё без ограничений\n\nПока идёт бета, всё открыто для теста.'};
+  plans:'Тарифы Velora:\n\n- **Free** — 40K токенов в день, перерыв 3 часа\n- **Plus, 1 ₽** — 600K токенов, перерыв 2 часа, безлимит фото, голос, проекты\n- **Pro, 1 ₽** — 1,5M токенов, перерыв 1 час, глубокое исследование, видео из кода\n- **Ultra, 1 ₽** — 3M токенов, перерыв 30 минут, всё без ограничений\n\nПока идёт бета, всё открыто для теста.'};
 var _dr2=window.demoReply;window.demoReply=function(){var us=chat().msgs.filter(function(m){return m.role==='user'}),m=us[us.length-1]||{},t=(m.content||'').toLowerCase();
   if(/подписк|тариф|сколько стоит|цен[аы]\b|токен/.test(t))return ID_A.plans;
   if(/кто ты|как тебя зовут|кто тебя (создал|сделал|разработал)|создател|разработчик|malchicismayami|что ты за/.test(t))return ID_A.who;return _dr2()};
@@ -2819,7 +2819,7 @@ function PADF(c){var wasd=/KeyA|KeyD|['"]a['"]|['"]d['"]/i.test(c)&&!/ArrowLeft|
  'b.addEventListener("pointerdown",function(e){e.preventDefault();try{b.setPointerCapture(e.pointerId)}catch(_){}if(iv)return;fire("keydown",i,0);iv=setInterval(function(){fire("keydown",i,1)},40);b.style.background="rgba(255,255,255,.38)"});'+
  '["pointerup","pointercancel","lostpointercapture"].forEach(function(n){b.addEventListener(n,function(e){e.preventDefault();var was=iv;clearInterval(iv);iv=0;b.style.background="rgba(255,255,255,.16)";if(was)fire("keyup",i)})});return b}'+
  'function grp(a){var g=document.createElement("div");g.style.cssText="display:flex;gap:8px";a.forEach(function(i){g.appendChild(btn(i))});return g}'+
- 'w.appendChild(grp([K[0],K[1]]));w.appendChild(grp([K[2],K[3],X[0],X[1]]));document.body.appendChild(w)});<\\/script>'}
+ 'w.appendChild(grp([K[0],K[1]]));w.appendChild(grp([K[2],K[3],X[0],X[1]]));document.body.appendChild(w)});<\/script>'}
 var _hd2=htmlDoc;htmlDoc=function(c){var d=_hd2(c);
   d=/<head[^>]*>/i.test(d)?d.replace(/<head[^>]*>/i,function(m){return m+SHIM}):/<html[^>]*>/i.test(d)?d.replace(/<html[^>]*>/i,function(m){return m+SHIM}):d.replace(/^(\s*<!doctype[^>]*>)?/i,function(m){return m+SHIM});
   if(/keydown|keyup|ArrowLeft|ArrowUp|keyCode|\.key\b/.test(c)&&!/touchstart|pointerdown|touchmove|touchend/.test(c))d+=PADF(c);return d};
@@ -2835,7 +2835,7 @@ var RICH2=RH0+' Если просят таблицу — всегда GFM-таб
 
 
 /* ===== v11 ===== */
-IDENT='Ты — Velora, ИИ-ассистент: Telegram-мини-приложение, закрытая бета. Создатель — разработчик malchicismayami; больше о нём ничего не известно, не выдумывай. Не называй себя ChatGPT, Claude или Gemini; какая модель внутри — не знаешь. О себе говори уверенно и по делу. Умеешь: чат; распознавание фото (кнопка «+» → фото или камера); создание картинок и видео; правка фото; таблицы, графики, схемы, формулы, SVG; код с живым предпросмотром (вкладки «Просмотр/Код», запуск, во весь экран, скачать, запись видео с canvas, AI Studio для правок); игры прямо в чате; голосовой режим (значок волны у поля ввода) с анимированным талисманом; проекты (цель и файлы); память («запомни …»); настройки тона, длины, языка, шрифта и звука. Тарифы: Free 40K токенов/день, перерыв 3 ч; Plus 150 ₽ — 600K; Pro 300 ₽ — 1,5M; Ultra 500 ₽ — 3M. Глубокое исследование и карта памяти в разработке. В бете лимиты сняты. ';
+IDENT='Ты — Velora, ИИ-ассистент: Telegram-мини-приложение, закрытая бета. Создатель — разработчик malchicismayami; больше о нём ничего не известно, не выдумывай. Не называй себя ChatGPT, Claude или Gemini; какая модель внутри — не знаешь. О себе говори уверенно и по делу. Умеешь: чат; распознавание фото (кнопка «+» → фото или камера); создание картинок и видео; правка фото; таблицы, графики, схемы, формулы, SVG; код с живым предпросмотром (вкладки «Просмотр/Код», запуск, во весь экран, скачать, запись видео с canvas, AI Studio для правок); игры прямо в чате; голосовой режим (значок волны у поля ввода) с анимированным талисманом; проекты (цель и файлы); память («запомни …»); настройки тона, длины, языка, шрифта и звука. Тарифы: Free 40K токенов/день, перерыв 3 ч; Plus 1 ₽ — 600K; Pro 1 ₽ — 1,5M; Ultra 1 ₽ — 3M. Глубокое исследование и карта памяти в разработке. В бете лимиты сняты. ';
 RICH2=' ГЛАВНОЕ: выполняй просьбу сразу и целиком, с первого раза. Не задавай уточняющих вопросов, не предлагай варианты на выбор — сама выбери разумные значения и одной строкой в конце скажи, что предположила. Никогда не отвечай «не умею», «уточните», «какой именно». Таблица — GFM-таблица. График — блок ```chart с JSON {"type":"bar|line|area|pie|donut","title":"…","labels":[…],"series":[{"name":"…","data":[…]}]}. Схема — ```diagram. Рисунок, логотип — ```svg. Формула — ```latex. Страница или виджет — ```html. ИГРА — один блок ```html с полным рабочим кодом: только чистый JS и canvas, без CDN, three.js и любых внешних файлов, без localStorage и alert; 3D имитируй в 2D. Стартовый экран, старт по первому касанию или клавише, счёт, game over, кнопка «Заново»; управление и касанием (крупные кнопки), и клавишами; canvas подгоняй под окно через resize. ТЕКСТ НЕ ДОЛЖЕН НАСЛАИВАТЬСЯ: весь HUD рисуй на canvas после clearRect за один проход в разных местах (счёт слева сверху, рекорд справа сверху, подсказки по центру только на стартовом экране) или в одном flex-контейнере; не ставь position:absolute-тексты друг на друга; никогда не оставляй надпись «Загрузка». ВИДЕО — один блок ```html с одним <canvas width=540 height=960> и анимацией на requestAnimationFrame по времени: сцены 6–10 с, зацикленные, плавные переходы, текст рисуй на canvas по одной надписи за раз, с обводкой для читаемости, без внешних ресурсов. Перед ответом мысленно проверь код на ошибки. Синтаксис блоков не объясняй. Фото разглядывай внимательно: детали, объекты, текст на картинке. ';
 ID_A.who='Я Velora — ИИ-ассистент, мини-приложение в Telegram (закрытая бета). Меня сделал разработчик **malchicismayami**. Умею: чат, распознавание фото, создание фото и видео, таблицы, графики, схемы, формулы, код с живым предпросмотром, игры, голосовой режим, проекты и память. Просите сразу, что нужно — я сделаю с первого раза.';
 profileText=(function(f){return function(){return (RICH2+IDENT+f.apply(this,arguments)).slice(0,4200)}})(_pt2);
@@ -3138,7 +3138,7 @@ button:active{transform:scale(.95)}
 (function(){
 var $=function(s){return document.querySelector(s)},sleep=function(ms){return new Promise(function(r){setTimeout(r,ms)})},hz=function(k){try{haptic(k)}catch(e){}};
 /* ===== ОПЛАТА: ЮKassa и Telegram Stars (1 ₽ = 1 ⭐) ===== */
-var M16=localStorage.getItem('velora_pm')||'rub',PR={plus:150,pro:300,ultra:500,pro_trial:10},NM={plus:'Plus',pro:'Pro',ultra:'Ultra',pro_trial:'Pro'},DY={plus:30,pro:30,ultra:30,pro_trial:3},
+var M16=localStorage.getItem('velora_pm')||'rub',PR={plus:1,pro:1,ultra:1,pro_trial:1},NM={plus:'Plus',pro:'Pro',ultra:'Ultra',pro_trial:'Pro'},DY={plus:30,pro:30,ultra:30,pro_trial:3},
 PF={plus:['600K токенов в день','Перерыв 2 часа','Фото без лимита','Голос и проекты'],pro:['1,5M токенов в день','Перерыв 1 час','Видео из кода','Глубокое исследование'],ultra:['3M токенов в день','Перерыв 30 минут','Всё без ограничений','Ранний доступ к новому']};PF.pro_trial=PF.pro;
 var DP={};try{DP=JSON.parse(localStorage.getItem('velora_dp')||'{}')}catch(e){}
 window.tierHook&&tierHook(function(){return DP.until>Date.now()?DP.t:''});
@@ -3148,7 +3148,7 @@ function paint(){var pl=$('#plans');if(!pl)return;[].forEach.call(pl.querySelect
  [].forEach.call(pl.querySelectorAll('.plp b'),function(b){if(!b.dataset.o)b.dataset.o=b.textContent;b.textContent=M16==='stars'?b.dataset.o.replace('₽','⭐'):b.dataset.o});
  [].forEach.call(pl.querySelectorAll('.plcta.go'),function(b){var p=b.dataset.p;if(!PR[p]){b.textContent='Бесплатный тариф';b.style.opacity='.45';b.style.pointerEvents='none';return}b.style.opacity='';b.style.pointerEvents='';b.textContent='Купить '+(NM[p]||p)+' · '+PR[p]+' '+cur()});var t=$('#trp16');if(t)t.textContent=PR.pro_trial+' '+cur()}
 var plH=document.querySelector('#plans .plH');
-if(plH){var bx=document.createElement('div');bx.className='pm16';bx.innerHTML='<div class="sg16"><button type="button" data-m="rub">₽ ЮKassa</button><button type="button" data-m="stars">⭐ Telegram Stars</button></div><button type="button" class="tr16"><span><b>Pro на 3 дня</b><small>Все возможности Pro, чтобы попробовать</small></span><em id="trp16">10 ₽</em></button>';plH.appendChild(bx);
+if(plH){var bx=document.createElement('div');bx.className='pm16';bx.innerHTML='<div class="sg16"><button type="button" data-m="rub">₽ ЮKassa</button><button type="button" data-m="stars">⭐ Telegram Stars</button></div><button type="button" class="tr16"><span><b>Pro на 3 дня</b><small>Все возможности Pro, чтобы попробовать</small></span><em id="trp16">1 ₽</em></button>';plH.appendChild(bx);
  bx.querySelector('.sg16').onclick=function(e){var b=e.target.closest('button');if(!b)return;M16=b.dataset.m;try{localStorage.setItem('velora_pm',M16)}catch(x){}hz('light');paint()};
  bx.querySelector('.tr16').onclick=function(){buy16('pro_trial')};
  try{new MutationObserver(function(){paint()}).observe($('#plans .plS'),{childList:true})}catch(e){}paint()}
@@ -3274,7 +3274,7 @@ if(sc){var vr=document.createElement('div');vr.className='setrow16';vr.innerHTML
  vr.querySelector('.vp16').onclick=function(e){var b=e.target.closest('button');if(!b)return;VOICE=b.dataset.v;try{localStorage.setItem('velora_voice',VOICE)}catch(x){}hz('light');pv()};
  vr.querySelector('.vt16').onclick=function(){hz('medium');speakText('Привет! Я Velora. Так я теперь звучу.')};pv()}
 /* ===== Velora знает приложение ===== */
-window.RICH_HINT=(window.RICH_HINT||'')+' ИГРЫ И ВИДЕО: если просят игру, видео или анимацию, напиши ОДИН полный HTML-файл в блоке ```html: canvas, управление касаниями (свайп и тап, без клавиатуры), без внешних библиотек, компактно до 150 строк, все теги и script закрыты; для видео canvas 540x960 и requestAnimationFrame на 8 секунд. Сначала одна короткая фраза. ПРИЛОЖЕНИЕ: ты работаешь внутри Telegram мини-приложения Velora Ai (версия 0.16) и знаешь его интерфейс. Шапка: слева меню, по центру название чата с меткой беты, справа «+» новый чат. Меню: Создать фото, Создать видео, Изменить фото, Проекты, Настройки (профиль, тон, длина ответа, роль, голос), поиск по чатам, Недавние, Экспорт чата, звук, карточка тарифа с кнопкой See plans. В поле ввода: «+» (камера, фото, файл; формат, стиль и длительность для фото и видео), кнопка голоса (волна) и отправка. Голос: нажатие на волну, Velora вылетает в правый угол чата и говорит, в чате остаются только картинки, видео, код, таблицы; тап по Velora завершает разговор. Код ```html (игры, анимации) показывается карточкой «Запустить» на весь экран, оттуда можно записать видео. Есть графики, таблицы, формулы, схемы, память, проекты. Тарифы: Free 40K токенов в день, перерыв 3 ч; Plus 150 ₽; Pro 300 ₽; Ultra 500 ₽. Оплата через ЮKassa или Telegram Stars, 1 ₽ = 1 ⭐. Есть пробный Pro на 3 дня за 10 ₽ (или 10 ⭐) (карточка тарифа → See plans → вверху). Про приложение отвечай уверенно и по делу, подсказывай, где нажать.';
+window.RICH_HINT=(window.RICH_HINT||'')+' ИГРЫ И ВИДЕО: если просят игру, видео или анимацию, напиши ОДИН полный HTML-файл в блоке ```html: canvas, управление касаниями (свайп и тап, без клавиатуры), без внешних библиотек, компактно до 150 строк, все теги и script закрыты; для видео canvas 540x960 и requestAnimationFrame на 8 секунд. Сначала одна короткая фраза. ПРИЛОЖЕНИЕ: ты работаешь внутри Telegram мини-приложения Velora Ai (версия 0.16) и знаешь его интерфейс. Шапка: слева меню, по центру название чата с меткой беты, справа «+» новый чат. Меню: Создать фото, Создать видео, Изменить фото, Проекты, Настройки (профиль, тон, длина ответа, роль, голос), поиск по чатам, Недавние, Экспорт чата, звук, карточка тарифа с кнопкой See plans. В поле ввода: «+» (камера, фото, файл; формат, стиль и длительность для фото и видео), кнопка голоса (волна) и отправка. Голос: нажатие на волну, Velora вылетает в правый угол чата и говорит, в чате остаются только картинки, видео, код, таблицы; тап по Velora завершает разговор. Код ```html (игры, анимации) показывается карточкой «Запустить» на весь экран, оттуда можно записать видео. Есть графики, таблицы, формулы, схемы, память, проекты. Тарифы: Free 40K токенов в день, перерыв 3 ч; Plus 1 ₽; Pro 1 ₽; Ultra 1 ₽. Оплата через ЮKassa или Telegram Stars, 1 ₽ = 1 ⭐. Есть пробный Pro на 3 дня за 1 ₽ (или 1 ⭐) (карточка тарифа → See plans → вверху). Про приложение отвечай уверенно и по делу, подсказывай, где нажать.';
 })();
 </script>
 
@@ -3564,14 +3564,15 @@ var _s=show;show=function(el){var sync=null;
 (function(){
 /* ---------- нейросеть онлайн: свой сервер, а если его нет или он молчит — открытый сервис ---------- */
 function needsAI(t){return /игр|game|видео|анимаци|video|animation|canvas|html|сайт|страниц|скрипт|код\b/i.test(String(t||''))}
+var LOG=window.__vlog=[];function L(t){LOG.push(new Date().toLocaleTimeString('ru-RU')+' '+t);if(LOG.length>14)LOG.shift()}
 async function onlineChat(msgs,o){o=o||{};var prof='';try{prof=profileText()}catch(e){}
- if(!S.demo){try{var r=await post('/api/chat',{messages:msgs,image:null,profile:prof});if(r&&r.r.ok&&r.j&&r.j.reply)return r.j.reply}catch(e){}}
+ if(!S.demo){try{var r=await post('/api/chat',{messages:msgs,image:null,profile:prof});if(r&&r.r.ok&&r.j&&r.j.reply){window.__lastSrc='ваш сервер';return r.j.reply}L('сервер /api/chat: '+(r?r.r.status+' '+((r.j&&r.j.error)||''):'нет ответа'))}catch(e){L('сервер /api/chat: '+e.message)}}
  var key='';try{key=localStorage.getItem('velora_key')||''}catch(e){}
  var models=['openai','mistral'];
  for(var i=0;i<models.length;i++){var ctl=new AbortController(),tm=setTimeout(function(){ctl.abort()},110000);
   try{var rr=await fetch('https://text.pollinations.ai/openai',{method:'POST',signal:ctl.signal,headers:Object.assign({'Content-Type':'application/json'},key?{Authorization:'Bearer '+key}:{}),
     body:JSON.stringify({model:models[i],messages:[{role:'system',content:prof}].concat(msgs),temperature:.7,max_tokens:12000,private:true,seed:Math.floor(Math.random()*1e6)})});
-   if(!rr.ok)continue;var j=await rr.json(),t=j&&j.choices&&j.choices[0]&&j.choices[0].message&&j.choices[0].message.content;if(t&&t.length>20)return t}catch(e){}finally{clearTimeout(tm)}}
+   if(!rr.ok){L('pollinations '+models[i]+': HTTP '+rr.status);continue}var j=await rr.json(),t=j&&j.choices&&j.choices[0]&&j.choices[0].message&&j.choices[0].message.content;if(t&&t.length>20){window.__lastSrc='pollinations';return t}L('pollinations '+models[i]+': пустой ответ')}catch(e){L('pollinations: '+(e.name==='AbortError'?'таймаут':e.message))}finally{clearTimeout(tm)}}
  return ''}
 window.onlineChat=onlineChat;window.needsAI=needsAI;
 /* ---------- проверка кода: синтаксис + запуск в скрытой песочнице + «нажатие» старта ---------- */
@@ -3580,15 +3581,16 @@ function cutCode(raw){raw=String(raw||'');if((raw.match(/```/g)||[]).length%2===
 function probe(code){return new Promise(function(res){
  var re=/<script(?![^>]*\bsrc\s*=)([^>]*)>([\s\S]*?)<\/script>/gi,m;
  while((m=re.exec(code))){if(/type\s*=\s*["']?module/i.test(m[1]))continue;try{new Function(m[2])}catch(e){return res('синтаксическая ошибка: '+e.message)}}
- var f=document.createElement('iframe');f.setAttribute('sandbox','allow-scripts');f.style.cssText='position:fixed;left:-9999px;top:0;width:390px;height:700px;border:0;opacity:0;pointer-events:none';
+ var ext=code.match(/<script[^>]*\bsrc\s*=\s*["']?(https?:)?\/\/[^"'\s>]+/i);if(ext)return res('код подключает внешнюю библиотеку, нужен чистый JS без CDN');
+ var phase=0,f=document.createElement('iframe');f.setAttribute('sandbox','allow-scripts');f.style.cssText='position:fixed;left:-9999px;top:0;width:390px;height:700px;border:0;opacity:0;pointer-events:none';
  var done=false,t,fin=function(r){if(done)return;done=true;removeEventListener('message',h);clearTimeout(t);try{f.remove()}catch(e){}res(r||'')},
-  h=function(e){if(e.source===f.contentWindow&&e.data&&e.data.verr)fin('ошибка при запуске: '+String(e.data.verr).slice(0,160))};
+  h=function(e){if(e.source!==f.contentWindow||!e.data)return;if(e.data.vkick){phase=1;return}if(e.data.verr){var m=String(e.data.verr);if(phase===0||/is not defined|SyntaxError|before initialization/i.test(m))fin('ошибка при запуске: '+m.slice(0,160))}};
  addEventListener('message',h);
- var kick='<script>setTimeout(function(){try{var T=[document.body,document.querySelector("canvas"),document];["pointerdown","mousedown","touchstart","click","keydown"].forEach(function(n){T.forEach(function(x){if(!x)return;try{x.dispatchEvent(n==="keydown"?new KeyboardEvent(n,{key:" ",code:"Space",keyCode:32,bubbles:true}):new Event(n,{bubbles:true}))}catch(e){}})})}catch(e){}},700)<\/script>';
+ var kick='<script>setTimeout(function(){try{parent.postMessage({vkick:1},"*")}catch(e){}try{var T=[document.body,document.querySelector("canvas"),document];["pointerdown","mousedown","touchstart","click","keydown"].forEach(function(n){T.forEach(function(x){if(!x)return;try{x.dispatchEvent(n==="keydown"?new KeyboardEvent(n,{key:" ",code:"Space",keyCode:32,bubbles:true}):new Event(n,{bubbles:true}))}catch(e){}})})}catch(e){}},700)<\/script>';
  f.srcdoc=(window.__htmlDoc?window.__htmlDoc(code):code)+kick;document.body.appendChild(f);t=setTimeout(function(){fin('')},3000)})}
 window.probeCode=probe;
 /* ---------- самолечение ответа с игрой/анимацией ---------- */
-var healing=0,FIXQ='Код не работает: %e. Исправь и пришли ПОЛНЫЙ рабочий код заново одним блоком ```html, без пояснений. Все теги и script закрыты, все переменные объявлены, ничего внешнего. Проверь код на ошибки перед ответом.';
+var healing=0,FIXQ='Код не работает: %e. Исправь и пришли ПОЛНЫЙ рабочий код заново одним блоком ```html, без пояснений. Все теги и script закрыты, все переменные объявлены, никаких внешних библиотек, CDN и <script src>. Проверь код на ошибки перед ответом.';
 async function healMsg(el){var raw=el.__raw||'',code=getHtml(raw);if(!code||healing)return;healing++;
  try{var err=cutCode(raw)?'ответ оборвался, не закрыты теги или script':await probe(code),cur=raw,tries=0;
   while(err&&tries<2){tries++;try{toast(tries===1?'Нашёл ошибку в коде, исправляю…':'Проверяю исправление…')}catch(e){}
@@ -3600,6 +3602,18 @@ async function healMsg(el){var raw=el.__raw||'',code=getHtml(raw);if(!code||heal
   if(err)try{toast('Не вышло исправить само. Нажмите ↻ под сообщением')}catch(e){}
  }catch(e){}finally{healing--}}
 window.healMsg=healMsg;
+/* ---------- «Проверить связь»: показывает, что именно не работает ---------- */
+function diag(){var w=document.createElement('div');w.style.cssText='display:grid;gap:10px;font-size:14px;line-height:1.45';var rows={};
+ ['Сервер приложения','Нейросеть (чат и код)','Картинки','Журнал'].forEach(function(n){var r=document.createElement('div');r.style.cssText='padding:10px 12px;border-radius:14px;background:rgba(255,255,255,.06);white-space:pre-wrap;overflow-wrap:anywhere';r.innerHTML='<b>'+n+'</b><br><span style="color:var(--dim)">проверяю…</span>';w.appendChild(r);rows[n]=r.querySelector('span')});
+ var set=function(n,ok,t){rows[n].style.color=ok===true?'#fff':ok===false?'#ffb4a8':'var(--dim)';rows[n].textContent=(ok===true?'✓ ':ok===false?'✕ ':'')+t};
+ openModal({title:'Проверка связи',sub:'Что работает, а что нет',node:w});
+ (async function(){
+  try{var r=await fetch(API_BASE+'/api/me',{headers:headers()});set('Сервер приложения',r.ok||r.status===401,r.ok?'отвечает (HTTP 200)':r.status===401?'отвечает, нужен пароль':'HTTP '+r.status)}catch(e){set('Сервер приложения',false,API_BASE?'не отвечает: '+e.message:'сервера нет, приложение открыто само по себе. Укажите адрес сервера в window.VELORA_API')}
+  var t0=Date.now();var a=await onlineChat([{role:'user',content:'Ответь одним словом: готово'}]);set('Нейросеть (чат и код)',!!a,a?'отвечает за '+((Date.now()-t0)/1000).toFixed(1)+' с, источник: '+(window.__lastSrc||'?'):'нет ответа. Игры и видео без неё не создаются');
+  await new Promise(function(ok){var im=new Image(),to=setTimeout(function(){set('Картинки',false,'сервис картинок не ответил за 12 с');ok()},12000);im.onload=function(){clearTimeout(to);set('Картинки',true,'сервис картинок доступен');ok()};im.onerror=function(){clearTimeout(to);set('Картинки',false,'сервис картинок недоступен (ошибка загрузки)');ok()};im.src='https://image.pollinations.ai/prompt/test?width=64&height=64&nologo=true&seed='+Date.now()});
+  set('Журнал',null,LOG.length?LOG.join('\n'):'ошибок нет')})()}
+window.veloraDiag=diag;
+(function(){var sc=document.getElementById('setc');if(!sc)return;var r=document.createElement('div');r.className='setrow16';r.innerHTML='<b>Связь и ошибки</b><button type="button" class="vt16">Проверить связь</button>';r.querySelector('button').onclick=diag;sc.appendChild(r)})();
 var _s5=show;show=function(el){var h=false;try{h=!!(el&&el.classList&&el.classList.contains('ai')&&!el.classList.contains('still')&&S.busy&&!vm.on&&el.__raw&&/```html|<canvas|<!doctype html/i.test(el.__raw))}catch(e){}
  var r=_s5.apply(this,arguments);if(h)setTimeout(function(){healMsg(el)},600);return r};
 /* ---------- видео: нейросеть пишет анимацию, мы её проверяем и чиним (до 3 попыток) ---------- */
@@ -3611,7 +3625,7 @@ window.aiVideo16=async function(prompt){busy(true);var d=document.createElement(
    if(lab)lab.textContent=a?'Исправляю код…':'Пишу сценарий…';rep=await onlineChat(msgs);if(!rep){err='нет ответа от нейросети';continue}
    code=getHtml(rep);if(!code||!/<canvas/i.test(code)){err='в коде нет <canvas>';continue}if(cutCode(rep)){err='ответ оборвался';continue}
    if(lab)lab.textContent='Проверяю кадры…';err=await probe(code);if(!err)break}
-  if(err)throw new Error('Не получилось собрать видео ('+err+'). Нажмите «Создать видео» ещё раз.');
+  if(err)throw new Error('Не получилось собрать видео ('+err+')'+(LOG.length?'. '+LOG[LOG.length-1]:'')+'. Нажмите «Проверить связь» в настройках.');
   rep='Видео собрано. Нажмите «Запустить», запись пойдёт сама.\n\n```html\n'+code.trim()+'\n```';
   d.remove();var m=textEl('assistant',rep);push({role:'assistant',content:rep,t:Date.now()});show(m);scrollDown();
   setTimeout(function(){var h=m.querySelector('.hv16');if(h){h.click();setTimeout(function(){var r=document.querySelector('#pv16 .pvr');r&&r.click()},1500)}},700)}
