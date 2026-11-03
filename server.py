@@ -1,6 +1,6 @@
 """Velora: единый сервер (мини-приложение + Telegram-бот + оплата ЮKassa и Telegram Stars).
 
-Запуск на Render:   gunicorn server:app --workers 1 --threads 16 --timeout 300
+Запуск на Render:   gunicorn server:app --workers 1 --threads 16 --timeout 900
   (воркер строго один: сессии и задачи хранятся в памяти; timeout не меньше 300, игры и видео делаются долго)
 Файлы рядом: server.py, index.html (приложение), persona.md (необязательно), requirements.txt.
 
@@ -18,7 +18,7 @@
 
 ОСТАЛЬНОЕ
   YOOKASSA_RECEIPT_EMAIL (только для ИП/ООО с чеками), YOOKASSA_RETURN_URL,
-  LLM_MAX_TOKENS (по умолчанию 8000), UNLIMITED (1 = бета без лимитов), FREE_LIMIT, BETA_PASSWORD, BETA_GATE,
+  LLM_MAX_TOKENS (по умолчанию 60000), LLM_CONTINUES (авто-продолжение длинных ответов, по умолчанию 12), UNLIMITED (1 = бета без лимитов), FREE_LIMIT, BETA_PASSWORD, BETA_GATE,
   POLLINATIONS_KEY, OR_*_MODEL, GEMINI_*, CF_ACCOUNT_ID / CF_API_TOKEN (голос), TTS_VOICE,
   USE_POLLING, MOCK, ALLOW_BROWSER, MEDIA_TTL_HOURS.
 В кабинете ЮKassa: Интеграция → HTTP-уведомления → WEBAPP_URL/api/yookassa/webhook, событие payment.succeeded.
@@ -48,7 +48,18 @@ DB_PATH = os.getenv("DB_PATH") or str(BASE / "velora.db")
 Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
 TG_API = os.getenv("TG_API", "https://api.telegram.org")
 MEDIA_TTL = int(os.getenv("MEDIA_TTL_HOURS", "24")) * 3600
-LLM_MAX = int(os.getenv("LLM_MAX_TOKENS", "8000"))
+LLM_MAX = int(os.getenv("LLM_MAX_TOKENS", "60000"))
+LLM_CONT = int(os.getenv("LLM_CONTINUES", "12"))  # сколько раз автоматически «продолжить», если ответ упёрся в лимит
+LLM_DEADLINE = int(os.getenv("LLM_DEADLINE", "600"))  # общий предел одного ответа, секунд
+CONT_ASK = ("Продолжи ровно с того места, где оборвался ответ. Не повторяй уже написанное, без вступлений, "
+            "не начинай новый блок кода и не повторяй открывающие ```: просто допиши текст и код до конца.")
+
+
+def glue(a: str, b: str) -> str:
+    """Склеивает продолжение: убирает повторное открытие блока кода, если мы уже внутри него."""
+    if a.count("```") % 2 == 1:
+        b = re.sub(r"^\s*```[a-zA-Z]*\s*\n", "", b, count=1)
+    return a + b
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 WEBAPP_URL = (os.getenv("WEBAPP_URL") or os.getenv("RENDER_EXTERNAL_URL") or "").rstrip("/")
@@ -517,21 +528,30 @@ def gemini_chat(msgs, system, max_tokens) -> str:
                                                       "data": b64}})
         if parts:
             contents.append({"role": "model" if m.get("role") == "assistant" else "user", "parts": parts})
-    gen = {"temperature": 0.8, "maxOutputTokens": max(max_tokens, 400)}
+    gen = {"temperature": 0.8, "maxOutputTokens": min(max(max_tokens, 400), 65000)}
     if "flash" in model:
         gen["thinkingConfig"] = {"thinkingBudget": 0}
-    r = requests.post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-        headers={"Content-Type": "application/json", "x-goog-api-key": GEMINI_KEY}, timeout=170,
-        json={"systemInstruction": {"parts": [{"text": system}]}, "contents": contents,
-              "generationConfig": gen})
-    if r.status_code != 200:
-        raise RuntimeError(f"Google код {r.status_code}: {r.text[:200]}")
-    cand = (r.json().get("candidates") or [{}])[0]
-    txt = "".join(p.get("text", "") for p in (cand.get("content") or {}).get("parts") or []).strip()
-    if not txt:
-        raise RuntimeError("Google вернул пустой ответ")
-    return txt
+    out, t0 = "", time.time()
+    for _ in range(LLM_CONT + 1):
+        r = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+            headers={"Content-Type": "application/json", "x-goog-api-key": GEMINI_KEY}, timeout=280,
+            json={"systemInstruction": {"parts": [{"text": system}]}, "contents": contents,
+                  "generationConfig": gen})
+        if r.status_code != 200:
+            if out:
+                break
+            raise RuntimeError(f"Google код {r.status_code}: {r.text[:200]}")
+        cand = (r.json().get("candidates") or [{}])[0]
+        txt = "".join(p.get("text", "") for p in (cand.get("content") or {}).get("parts") or [])
+        if not txt.strip() and not out:
+            raise RuntimeError("Google вернул пустой ответ")
+        out = glue(out, txt) if out else txt
+        if cand.get("finishReason") != "MAX_TOKENS" or time.time() - t0 > LLM_DEADLINE:
+            break
+        contents = contents + [{"role": "model", "parts": [{"text": txt}]},
+                               {"role": "user", "parts": [{"text": CONT_ASK}]}]
+    return out.strip()
 
 
 def ask_llm(msgs, system=None, max_tokens=700) -> str:
@@ -556,10 +576,11 @@ def ask_llm(msgs, system=None, max_tokens=700) -> str:
             sysmsg = system or PERSONA
 
             def call(messages, url=url, h=h, model=model):
-                return requests.post(url, headers=h, timeout=170, json={
-                    "model": model, "temperature": 0.8, "max_tokens": max_tokens, "messages": messages})
+                return requests.post(url, headers=h, timeout=280, json={
+                    "model": model, "temperature": 0.8, "max_tokens": min(max_tokens, 16000), "messages": messages})
 
-            r = call([{"role": "system", "content": sysmsg}] + msgs)
+            sent = [{"role": "system", "content": sysmsg}] + msgs
+            r = call(sent)
             if r.status_code == 400:  # некоторые модели не принимают system: вкладываем в первое сообщение
                 folded = [dict(m) for m in msgs]
                 for m in folded:
@@ -570,12 +591,24 @@ def ask_llm(msgs, system=None, max_tokens=700) -> str:
                         else:
                             m["content"] = [{"type": "text", "text": sysmsg + "\n\n---\n\n"}] + c
                         break
+                sent = folded
                 r = call(folded)
             if r.status_code != 200:
                 print("LLM", url.split("/")[2], r.status_code, r.text[:300])
                 last = f"{url.split('/')[2]} код {r.status_code}"
                 continue
-            txt = (r.json()["choices"][0]["message"]["content"] or "").strip()
+            ch = r.json()["choices"][0]
+            txt = ch["message"]["content"] or ""
+            t0 = time.time()
+            for _ in range(LLM_CONT):
+                if ch.get("finish_reason") != "length" or not txt or time.time() - t0 > LLM_DEADLINE:
+                    break
+                r2 = call(sent + [{"role": "assistant", "content": txt}, {"role": "user", "content": CONT_ASK}])
+                if r2.status_code != 200:
+                    break
+                ch = r2.json()["choices"][0]
+                txt = glue(txt, ch["message"]["content"] or "")
+            txt = txt.strip()
             if txt:
                 return txt
         except Exception as e:  # noqa: BLE001
@@ -899,7 +932,7 @@ def chat():
             if m.get("role") in ("user", "assistant") and isinstance(m.get("content"), str)]
     if not msgs or msgs[-1]["role"] != "user":
         return jsonify(error="Пустое сообщение"), 400
-    msgs = [{"role": m["role"], "content": m["content"][:30000]} for m in msgs[-24:]]
+    msgs = [{"role": m["role"], "content": m["content"][:300000]} for m in msgs[-24:]]
     while msgs and msgs[0]["role"] != "user":  # некоторые нейросети требуют начинать с пользователя
         msgs.pop(0)
     u = uid()
@@ -925,7 +958,7 @@ def chat():
         time.sleep(1.2)
         return done(mock_reply(text0, bool(image)))
     try:
-        prof = str(body.get("profile") or "")[:8000].strip()
+        prof = str(body.get("profile") or "")[:30000].strip()
         system = PERSONA + ("\n\nПожелания пользователя (учитывай, если они не противоречат правилам выше): "
                             + prof if prof else "")
         return done(ask_llm(msgs, system=system, max_tokens=LLM_MAX))
@@ -1376,3 +1409,4 @@ startup_report()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "8080")), threaded=True)
+
