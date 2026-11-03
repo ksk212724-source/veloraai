@@ -108,11 +108,12 @@ PLANS = {
                   "title": "Velora Pro · 3 дня", "desc": "Пробный Pro на 3 дня"},
 }
 
-YK_API = os.getenv("YK_API", "https://api.yookassa.ru/v3")
-YK_SHOP = os.getenv("YOOKASSA_SHOP_ID", "1513722")
-YK_KEY = os.getenv("YOOKASSA_SECRET_KEY") or os.getenv("YOOKASSA_SECRET", "")
-YK_RETURN = os.getenv("YOOKASSA_RETURN_URL", "")
-YK_EMAIL = os.getenv("YOOKASSA_RECEIPT_EMAIL") or os.getenv("YK_RECEIPT_EMAIL", "")
+YK_API = os.getenv("YK_API", "https://api.yookassa.ru/v3").strip().rstrip("/")
+YK_SHOP = (os.getenv("YOOKASSA_SHOP_ID", "1513722") or "").strip()
+YK_KEY = (os.getenv("YOOKASSA_SECRET_KEY") or os.getenv("YOOKASSA_SECRET", "")).strip().strip('"').strip("'")
+YK_RETURN = (os.getenv("YOOKASSA_RETURN_URL", "") or "").strip()
+YK_EMAIL = (os.getenv("YOOKASSA_RECEIPT_EMAIL") or os.getenv("YK_RECEIPT_EMAIL", "")).strip()
+YK_TAX = (os.getenv("YOOKASSA_TAX_SYSTEM", "") or "").strip()  # 1..6, только если у магазина несколько систем налогообложения
 
 GEN_URL = "https://gen.pollinations.ai/image/"
 OLD_IMG_URL = "https://image.pollinations.ai/prompt/"
@@ -265,6 +266,76 @@ def yk(method: str, path: str, body=None):
         print("ЮKassa", method, path, r.status_code, r.text[:300])
     r.raise_for_status()
     return r.json()
+
+
+_yk_me = {"t": 0.0, "d": None}
+
+
+def yk_me(force: bool = False) -> dict:
+    """Настройки магазина у ЮKassa (GET /me): включены ли чеки, тестовый ли магазин."""
+    if not force and _yk_me["d"] is not None and time.time() - _yk_me["t"] < 600:
+        return _yk_me["d"]
+    d = yk("GET", "/me")
+    _yk_me.update(t=time.time(), d=d)
+    return d
+
+
+def yk_fiscal() -> bool:
+    """True, если в магазине включён сервис чеков ЮKassa: тогда receipt в платеже обязателен."""
+    try:
+        d = yk_me()
+    except Exception:  # noqa: BLE001
+        return bool(YK_EMAIL)
+    f = d.get("fiscalization")
+    if isinstance(f, dict) and "enabled" in f:
+        return bool(f["enabled"])
+    return bool(d.get("fiscalization_enabled"))
+
+
+def yk_err(e: "requests.HTTPError") -> tuple:
+    code = desc = par = ""
+    try:
+        j = e.response.json()
+        code, desc, par = j.get("code", ""), j.get("description", ""), j.get("parameter", "")
+    except Exception:  # noqa: BLE001
+        desc = (e.response.text or "")[:150]
+    return e.response.status_code, code, desc, par
+
+
+def yk_create(u: str, plan: str, ret: str) -> dict:
+    """Создаёт платёж. Чек добавляется, только если его требует магазин; при ошибке про чек пробуем наоборот."""
+    p = PLANS[plan]
+    val = f"{p['rub']}.00"
+    base = {"amount": {"value": val, "currency": "RUB"}, "capture": True,
+            "confirmation": {"type": "redirect", "return_url": ret},
+            "description": f"{p['title']} · {p['days']} дн.", "metadata": {"uid": u, "plan": plan}}
+
+    def body(with_receipt: bool) -> dict:
+        b = dict(base)
+        if with_receipt:
+            rc = {"customer": {"email": YK_EMAIL}, "items": [{
+                "description": p["title"][:128], "quantity": "1",
+                "amount": {"value": val, "currency": "RUB"},
+                "vat_code": int(os.getenv("YOOKASSA_VAT_CODE", "1")),
+                "payment_subject": "service", "payment_mode": "full_payment"}]}
+            if YK_TAX.isdigit():
+                rc["tax_system_code"] = int(YK_TAX)
+            b["receipt"] = rc
+        return b
+
+    first = yk_fiscal() and bool(YK_EMAIL)
+    try:
+        return yk("POST", "/payments", body(first))
+    except requests.HTTPError as e:
+        st, code, desc, par = yk_err(e)
+        about_receipt = "receipt" in (desc + par).lower() or "чек" in (desc + par).lower()
+        if st == 400 and about_receipt:
+            if not first and YK_EMAIL:
+                return yk("POST", "/payments", body(True))
+            if first:
+                return yk("POST", "/payments", body(False))
+            raise RuntimeError("Магазину нужен чек: добавьте в Render переменную YOOKASSA_RECEIPT_EMAIL (любая ваша почта)")
+        raise
 
 
 def sub_of(u: str) -> dict:
@@ -921,21 +992,18 @@ def pay():
     else:
         if not (YK_SHOP and YK_KEY):
             return jsonify(error="Оплата ещё не подключена"), 503
-        val = f"{p['rub']}.00"
-        ret = YK_RETURN or (f"https://t.me/{bot_username()}" if bot_username() else WEBAPP_URL)
-        yb = {"amount": {"value": val, "currency": "RUB"}, "capture": True,
-              "confirmation": {"type": "redirect", "return_url": ret},
-              "description": f"{p['title']} · {p['days']} дн.", "metadata": {"uid": u, "plan": plan}}
-        if YK_EMAIL:
-            yb["receipt"] = {"customer": {"email": YK_EMAIL}, "items": [{
-                "description": p["title"][:128], "quantity": "1",
-                "amount": {"value": val, "currency": "RUB"},
-                "vat_code": int(os.getenv("YOOKASSA_VAT_CODE", "1")),
-                "payment_subject": "service", "payment_mode": "full_payment"}]}
+        ret = YK_RETURN or (f"https://t.me/{bot_username()}" if bot_username() else WEBAPP_URL) or "https://t.me"
         try:
-            pr = yk("POST", "/payments", yb)
-        except Exception:  # noqa: BLE001
-            return jsonify(error="ЮKassa не ответила, попробуйте ещё раз"), 502
+            pr = yk_create(u, plan, ret)
+        except requests.HTTPError as e:
+            st, code, desc, par = yk_err(e)
+            hint = {401: " Проверьте YOOKASSA_SHOP_ID и YOOKASSA_SECRET_KEY: ключ должен быть от этого же магазина",
+                    403: " Магазин не активирован или у ключа нет прав на платежи"}.get(st, "")
+            return jsonify(error=f"ЮKassa отклонила платёж ({st}) {code}: {desc} {par}.{hint}"[:300]), 502
+        except RuntimeError as e:
+            return jsonify(error=str(e)), 502
+        except Exception as e:  # noqa: BLE001
+            return jsonify(error=f"ЮKassa не ответила ({type(e).__name__}), попробуйте ещё раз"), 502
         pid, url, method = pr["id"], pr["confirmation"]["confirmation_url"], "yookassa"
     with lock:
         db.execute("insert into pays(id,uid,status,t,plan,amount,method) values(?,?,?,?,?,?,?)",
@@ -991,6 +1059,34 @@ def cleaner():
                 f.unlink(missing_ok=True)
         for k in [k for k, v in jobs.items() if v.get("t", 0) < cutoff]:
             jobs.pop(k, None)
+
+
+@app.get("/api/yk-check")
+def yk_check():
+    """Открыть в браузере: WEBAPP_URL/api/yk-check. Секретов не показывает."""
+    out = {"shop_id": YK_SHOP, "key_set": bool(YK_KEY),
+           "key_kind": "test_" if YK_KEY.startswith("test_") else "live_" if YK_KEY.startswith("live_") else "неизвестный формат",
+           "receipt_email_set": bool(YK_EMAIL), "mock": MOCK}
+    if not (YK_SHOP and YK_KEY):
+        out["problem"] = "Не заданы YOOKASSA_SHOP_ID или YOOKASSA_SECRET_KEY"
+        return jsonify(out)
+    try:
+        d = yk_me(force=True)
+        out.update(auth="ok", account_id=d.get("account_id"), test_shop=d.get("test"), status=d.get("status"),
+                   receipts_required=yk_fiscal(), methods=d.get("payment_methods"))
+        if str(d.get("account_id")) != YK_SHOP:
+            out["problem"] = f"Ключ относится к магазину {d.get('account_id')}, а в YOOKASSA_SHOP_ID указан {YK_SHOP}"
+        elif yk_fiscal() and not YK_EMAIL:
+            out["problem"] = "В магазине включены чеки ЮKassa: добавьте YOOKASSA_RECEIPT_EMAIL"
+        elif d.get("status") != "enabled":
+            out["problem"] = "Магазин в статусе " + str(d.get("status")) + ": оплата ещё не включена в кабинете ЮKassa"
+    except requests.HTTPError as e:
+        st, code, desc, par = yk_err(e)
+        out.update(auth="ошибка", http=st, code=code, description=desc,
+                   problem="Неверные shopId или секретный ключ" if st == 401 else desc)
+    except Exception as e:  # noqa: BLE001
+        out.update(auth="нет связи", problem=f"{type(e).__name__}: {str(e)[:150]}")
+    return jsonify(out)
 
 
 @app.get("/health")
