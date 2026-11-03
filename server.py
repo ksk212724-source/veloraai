@@ -1,1112 +1,479 @@
-"""Velora — бэкенд + Telegram-бот.
-
-Переменные окружения:
-BOT_TOKEN, WEBAPP_URL, POLLINATIONS_KEY, GEMINI_API_KEY, OPENROUTER_API_KEY,
-LLM_API_URL / LLM_API_KEY / LLM_MODEL, FREE_LLM_URL / FREE_LLM_MODEL,
-YOOKASSA_SHOP_ID / YOOKASSA_SECRET_KEY, FREE_LIMIT, UNLIMITED (1 = бета без лимитов),
-BETA_PASSWORD, BETA_GATE, USE_POLLING, PORT, MOCK, ALLOW_BROWSER.
-Видео без платных ключей: Pollinations (POLLINATIONS_KEY, модели POLL_VIDEO_MODELS), затем бесплатные
-Hugging Face Spaces (нужен `pip install gradio_client`; HF_TOKEN необязателен, но даёт больше GPU-квоты;
-список Spaces через HF_VIDEO_SPACES).
-Методичка нейросети лежит в persona.md и подставляется как системное сообщение.
+#!/usr/bin/env python3
 """
-import base64
-import hashlib
-import hmac
-import json
-import os
-import re
-import secrets
-import sqlite3
-import subprocess
-import threading
-import time
-import urllib.parse
-import uuid
-from pathlib import Path
+Velora — полный сервер для мини-приложения (только стандартная библиотека Python 3.9+, ничего ставить не нужно).
 
-import requests
-from flask import Flask, abort, jsonify, request, send_from_directory
+Что умеет
+  • отдаёт index.html (приложение) и принимает все запросы приложения: /api/me, /api/unlock, /api/chat,
+    /api/generate + /api/job (картинки), /api/tts, /api/stt, /api/send, /media/*
+  • оплата: ЮKassa (карта, СБП) и Telegram Stars; подписки хранятся в SQLite
+  • ответы нейросети: любой OpenAI-совместимый сервис (OpenRouter, Groq, DeepSeek, OpenAI, Pollinations …)
 
-BASE = Path(__file__).parent
-MEDIA = BASE / "media"
-MEDIA.mkdir(exist_ok=True)
+Запуск
+    1) положите рядом velora_server.py и index.html (ваш velora_17_….html переименуйте в index.html)
+    2) задайте переменные окружения (ниже) и запустите:   python3 velora_server.py
+    3) откройте https://ВАШ-ДОМЕН/ в Telegram как Web App бота (BotFather → /newapp или кнопка меню)
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-WEBAPP_URL = (os.getenv("WEBAPP_URL") or os.getenv("RENDER_EXTERNAL_URL") or "").rstrip("/")
-POLL_KEY = os.getenv("POLLINATIONS_KEY", "")
-MOCK = os.getenv("MOCK") == "1"
-ALLOW_BROWSER = os.getenv("ALLOW_BROWSER") == "1" or MOCK
+ОБЯЗАТЕЛЬНЫЕ переменные
+    BOT_TOKEN              токен бота от @BotFather
+    LLM_API_KEY            ключ нейросети (см. LLM_* ниже)
+    PUBLIC_URL             https-адрес сервера, например https://velora.example.com
 
-# OpenRouter
-OR_KEY = os.getenv("OPENROUTER_API_KEY", "")
-OR_BASE = "https://openrouter.ai/api/v1"
-OR_CHAT_MODEL = os.getenv("OR_CHAT_MODEL", "google/gemini-2.5-flash")
-OR_IMAGE_MODEL = os.getenv("OR_IMAGE_MODEL", "bytedance-seed/seedream-4.5")
-OR_EDIT_MODEL = os.getenv("OR_EDIT_MODEL", "") or OR_IMAGE_MODEL
-OR_VIDEO_MODEL = os.getenv("OR_VIDEO_MODEL", "google/veo-3.1-fast")
+ЮKassa (shopId из вашего письма: 1513722)
+    YOOKASSA_SHOP_ID       по умолчанию 1513722
+    YOOKASSA_SECRET        секретный ключ: личный кабинет ЮKassa → Интеграция → Ключи API → «Выпустить ключ».
+                           Ключ показывают один раз. Никому его не отправляйте, только в переменную окружения.
+    В личном кабинете: Интеграция → HTTP-уведомления → адрес  PUBLIC_URL/yookassa/webhook  → событие payment.succeeded.
+    (Даже без уведомлений подписка включится: приложение само опрашивает статус платежа.)
+    YK_RECEIPT_EMAIL       нужен только если магазин на ИП/ООО с онлайн-кассой (чек 54-ФЗ): e-mail для чеков.
+                           Самозанятым чек не нужен, оставьте пустым.
 
-LLM_API_URL = os.getenv("LLM_API_URL", "")
-LLM_API_KEY = os.getenv("LLM_API_KEY", "")
-LLM_MODEL = os.getenv("LLM_MODEL", "")
+Нейросеть (любая совместимая с OpenAI):
+    LLM_BASE_URL   по умолчанию https://text.pollinations.ai/openai
+                   Groq:       https://api.groq.com/openai/v1        модель llama-3.3-70b-versatile
+                   OpenRouter: https://openrouter.ai/api/v1          модель, например, deepseek/deepseek-chat-v3.1
+                   DeepSeek:   https://api.deepseek.com/v1           модель deepseek-chat
+                   OpenAI:     https://api.openai.com/v1             модель gpt-4o-mini
+    LLM_MODEL      по умолчанию openai   (для Pollinations)
+    LLM_MAX_TOKENS по умолчанию 8000     (игры и анимации длинные, не ставьте меньше 6000)
+  Картинки:  IMG_PROVIDER=pollinations (по умолчанию) или openai;  IMG_BASE_URL, IMG_API_KEY, IMG_MODEL
+  Голос:     TTS_BASE_URL / TTS_API_KEY / TTS_MODEL (озвучка), STT_BASE_URL / STT_API_KEY / STT_MODEL (распознавание).
+             Не заданы — приложение само использует озвучку браузера, а голосовой ввод сообщит, что недоступен.
 
-# Google Gemini
-GEMINI_KEY = os.getenv("GEMINI_API_KEY") or (LLM_API_KEY if "googleapis.com" in LLM_API_URL else "")
-GEMINI_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-2.5-flash-image")
+Остальное
+    BETA_PASSWORD    пароль закрытой беты (пусто = без пароля)
+    PRICE_PLUS_RUB / PRICE_PRO_RUB / PRICE_ULTRA_RUB / PRICE_TRIAL_RUB     цены в рублях (по умолчанию везде 1)
+    PRICE_PLUS_STARS / PRICE_PRO_STARS / PRICE_ULTRA_STARS / PRICE_TRIAL_STARS   цены в звёздах (по умолчанию везде 1)
+    BETA=1           лимиты сняты (по умолчанию 1); BETA=0 — бесплатно 10 сообщений за 3 часа
+    PORT=8080, DB_PATH=velora.db, MEDIA_DIR=media, INDEX_PATH=index.html, ALLOW_ORIGIN=*
 
-# Голос: распознавание через Cloudflare Workers AI (Whisper), озвучка через edge-tts
-CF_ACCOUNT = os.getenv("CF_ACCOUNT_ID", "")
-CF_TOKEN = os.getenv("CF_API_TOKEN", "")
-TTS_VOICE = os.getenv("TTS_VOICE", "ru-RU-SvetlanaNeural")  # мужской: ru-RU-DmitryNeural
+За HTTPS-прокси (nginx/Caddy) поставьте таймаут ответа не меньше 180 секунд: игры пишутся долго.
+"""
+import base64, hashlib, hmac, json, mimetypes, os, re, secrets, sqlite3, sys, threading, time, urllib.error, urllib.request, uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qsl, unquote, quote
 
-FREE_LLM_URL = os.getenv("FREE_LLM_URL", "https://gen.pollinations.ai/v1/chat/completions")
-FREE_LLM_MODEL = os.getenv("FREE_LLM_MODEL", "openai")
-PERSONA = (BASE / "persona.md").read_text(encoding="utf-8") if (BASE / "persona.md").exists() \
-    else "Ты Velora, дружелюбная ИИ-помощница. Отвечай по-русски, коротко и по делу."
+E = os.environ.get
+BOT_TOKEN = E("BOT_TOKEN", "")
+PUBLIC_URL = (E("PUBLIC_URL", "") or E("RENDER_EXTERNAL_URL", "") or "").rstrip("/")
+TG_API = E("TG_API", "https://api.telegram.org")
+YK_API = E("YK_API", "https://api.yookassa.ru/v3")
+YK_SHOP = E("YOOKASSA_SHOP_ID", "1513722")
+YK_SECRET = E("YOOKASSA_SECRET", "")
+YK_EMAIL = E("YK_RECEIPT_EMAIL", "")
+LLM_BASE = (E("LLM_BASE_URL", "https://text.pollinations.ai/openai")).rstrip("/")
+LLM_KEY = E("LLM_API_KEY", "")
+LLM_MODEL = E("LLM_MODEL", "openai")
+LLM_MAX = int(E("LLM_MAX_TOKENS", "8000"))
+IMG_PROVIDER = E("IMG_PROVIDER", "pollinations")
+IMG_BASE = (E("IMG_BASE_URL", "https://image.pollinations.ai")).rstrip("/")
+IMG_KEY = E("IMG_API_KEY", "") or LLM_KEY
+IMG_MODEL = E("IMG_MODEL", "flux" if IMG_PROVIDER == "pollinations" else "gpt-image-1")
+TTS_BASE, TTS_KEY, TTS_MODEL = (E("TTS_BASE_URL", "")).rstrip("/"), E("TTS_API_KEY", ""), E("TTS_MODEL", "tts-1")
+STT_BASE, STT_KEY, STT_MODEL = (E("STT_BASE_URL", "")).rstrip("/"), E("STT_API_KEY", ""), E("STT_MODEL", "whisper-1")
+BETA = E("BETA", "1") == "1"
+PASSWORD = E("BETA_PASSWORD", "")
+ORIGIN = E("ALLOW_ORIGIN", "*")
+DB_PATH = E("DB_PATH", "velora.db")
+MEDIA = E("MEDIA_DIR", "media")
+INDEX = E("INDEX_PATH", "index.html")
+SECRET = E("WEBHOOK_SECRET") or hashlib.sha256(("wh" + BOT_TOKEN).encode()).hexdigest()[:32]
+FREE_MSGS, FREE_WINDOW = 10, 3 * 3600
+os.makedirs(MEDIA, exist_ok=True)
+_lock = threading.Lock()
 
-BETA_PASSWORD = os.getenv("BETA_PASSWORD", "5050")
-BETA_GATE = os.getenv("BETA_GATE", "1") == "1"
-FREE = int(os.getenv("FREE_LIMIT", "10"))
-UNLIMITED = os.getenv("UNLIMITED", "1") == "1"
-PRICE = "150.00"
-PERIOD = 30 * 86400
-WINDOW = 3 * 3600
+def _price(name, default=1):
+    try: return max(1, int(E(name, str(default))))
+    except ValueError: return default
 
-YK_SHOP = os.getenv("YOOKASSA_SHOP_ID", "")
-YK_KEY = os.getenv("YOOKASSA_SECRET_KEY", "")
-YK_RETURN = os.getenv("YOOKASSA_RETURN_URL") or WEBAPP_URL
-YK_EMAIL = os.getenv("YOOKASSA_RECEIPT_EMAIL", "")
-
-GEN_URL = "https://gen.pollinations.ai/image/"
-VIDEO_URL = "https://gen.pollinations.ai/video/"  # у видео отдельный адрес, /image/ даёт 400
-POLL_VIDEO_MODELS = [m.strip() for m in os.getenv("POLL_VIDEO_MODELS", os.getenv("VIDEO_MODEL", "wan-fast,seedance,ltx-2")).split(",") if m.strip()]
-HF_TOKEN = os.getenv("HF_TOKEN", "")
-HF_VIDEO_SPACES = [m.strip() for m in os.getenv("HF_VIDEO_SPACES", "zerogpu-aoti/wan2-2-fp8da-aoti,Lightricks/ltx-video-distilled").split(",") if m.strip()]
-OLD_IMG_URL = "https://image.pollinations.ai/prompt/"
-STYLES = {
-    "none": "",
-    "cinematic": ", cinematic lighting, film still, dramatic, high detail",
-    "photo": ", ultra realistic photo, 35mm, natural light, sharp focus",
-    "anime": ", anime style, clean lineart, vibrant, studio quality",
-    "3d": ", 3D render, soft studio light, octane, glossy materials",
-    "neon": ", neon noir, dark background, glowing accents, moody",
-    "minimal": ", minimalist, clean composition, soft gradients, elegant",
+PLANS = {
+    "plus":      {"days": 30, "rub": _price("PRICE_PLUS_RUB"),  "stars": _price("PRICE_PLUS_STARS"),  "title": "Velora Plus",  "desc": "600K токенов в день, фото без лимита, голос и проекты"},
+    "pro":       {"days": 30, "rub": _price("PRICE_PRO_RUB"),   "stars": _price("PRICE_PRO_STARS"),   "title": "Velora Pro",   "desc": "1,5M токенов в день, видео из кода, глубокое исследование"},
+    "ultra":     {"days": 30, "rub": _price("PRICE_ULTRA_RUB"), "stars": _price("PRICE_ULTRA_STARS"), "title": "Velora Ultra", "desc": "3M токенов в день, всё без ограничений"},
+    "pro_trial": {"days": 3,  "rub": _price("PRICE_TRIAL_RUB"), "stars": _price("PRICE_TRIAL_STARS"), "title": "Velora Pro · 3 дня", "desc": "Пробный Pro на 3 дня"},
 }
-IMAGE_SIZES = {"1:1": (1024, 1024), "3:4": (768, 1024), "16:9": (1280, 720), "9:16": (720, 1280)}
 
-app = Flask(__name__, static_folder=None)
-db = sqlite3.connect(BASE / "velora.db", check_same_thread=False)
-db.executescript("""
-create table if not exists users(uid text primary key, used int default 0, until real default 0);
-create table if not exists pays(id text primary key, uid text, status text, t real);
-create table if not exists beta(uid text primary key);
-""")
-try:
-    db.execute("alter table users add column lk real default 0")
-    db.commit()
-except sqlite3.OperationalError:
-    pass
+# ───────────────────────── база ─────────────────────────
+def db():
+    c = sqlite3.connect(DB_PATH, timeout=10)
+    c.execute("create table if not exists subs(user_id integer primary key, plan text, until integer)")
+    c.execute("create table if not exists pays(charge_id text primary key, user_id integer, plan text, amount integer, ts integer)")
+    c.execute("create table if not exists pending(pid text primary key, user_id integer, plan text, ts integer, done integer default 0)")
+    c.execute("create table if not exists usage(user_id text primary key, win integer, n integer)")
+    return c
 
-tickets: dict = {}
-jobs: dict = {}
-hits: dict = {}
-sessions: dict = {}  # sid -> (uid, до какого времени)
-SESSION_TTL = int(os.getenv("SESSION_TTL", str(6 * 3600)))
-APP_MSG_TTL = int(os.getenv("APP_MSG_TTL", "45"))
-open_msgs: dict = {}
-lock = threading.Lock()
+def get_sub(uid):
+    with _lock, db() as c:
+        r = c.execute("select plan, until from subs where user_id=?", (uid,)).fetchone()
+    return {"active": True, "plan": r[0], "sub_until": int(r[1])} if r and r[1] > time.time() else {"active": False, "plan": "free", "sub_until": 0}
 
-
-# ---------- защита ----------
-def valid_init_data(raw: str) -> bool:
-    try:
-        pairs = dict(urllib.parse.parse_qsl(raw, keep_blank_values=True))
-        got = pairs.pop("hash")
-        check = "\n".join(f"{k}={v}" for k, v in sorted(pairs.items()))
-        secret = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
-        calc = hmac.new(secret, check.encode(), hashlib.sha256).hexdigest()
-        fresh = time.time() - int(pairs.get("auth_date", "0")) < 86400
-        return hmac.compare_digest(calc, got) and fresh
-    except Exception:
-        return False
-
-
-def is_beta(u: str) -> bool:
-    if not BETA_GATE:
-        return True
-    with lock:
-        return db.execute("select 1 from beta where uid=?", (u,)).fetchone() is not None
-
-
-def add_beta(u: str):
-    with lock:
-        db.execute("insert or ignore into beta(uid) values(?)", (u,))
-        db.commit()
-
-
-def uid() -> str:
-    raw = request.headers.get("X-Init-Data", "")
-    if ALLOW_BROWSER and not raw:
-        return "web:" + (request.headers.get("X-Anon-Id") or request.remote_addr or "x")[:60]
-    try:
-        return "tg:" + str(json.loads(dict(urllib.parse.parse_qsl(raw)).get("user", "{}"))["id"])
-    except Exception:
-        abort(403)
-
-
-def check_access(gate=True):
-    if ALLOW_BROWSER:
-        return
-    if not BOT_TOKEN or not valid_init_data(request.headers.get("X-Init-Data", "")):
-        abort(403)
-    if gate and BETA_GATE:  # при каждом открытии мини-приложения пароль вводится заново
-        s = sessions.get(request.headers.get("X-Sess", ""))
-        if not s or s[1] < time.time() or s[0] != uid():
-            abort(401)
-
-
-def rate_limit(key: str, limit=20, per=3600):
-    now = time.time()
-    with lock:
-        arr = [t for t in hits.get(key, []) if now - t < per]
-        if len(arr) >= limit:
-            hits[key] = arr
-            abort(429)
-        arr.append(now)
-        hits[key] = arr
-
-
-# ---------- лимиты и оплата ----------
-def row(u: str):
-    """Возвращает (used, until, lk) и при необходимости запускает/снимает паузу."""
-    with lock:
-        db.execute("insert or ignore into users(uid) values(?)", (u,))
-        db.commit()
-        used, until, lk = db.execute("select used, until, lk from users where uid=?", (u,)).fetchone()
-        now = time.time()
-        if used >= FREE and not lk:  # лимит кончился: пауза в 3 часа
-            lk = now + WINDOW
-            db.execute("update users set lk=? where uid=?", (lk, u))
-            db.commit()
-        if lk and now >= lk:  # пауза прошла: новые запросы
-            db.execute("update users set used=0, lk=0 where uid=?", (u,))
-            db.commit()
-            used, lk = 0, 0
-    return used, until, lk
-
-
-def spend(u: str) -> bool:
-    if UNLIMITED:
-        return True
-    used, until, _ = row(u)
-    if until > time.time():
-        return True
-    if used >= FREE:
-        return False
-    with lock:
-        db.execute("update users set used=used+1, lk=case when used+1>=? then ? else lk end where uid=?",
-                   (FREE, time.time() + WINDOW, u))
-        db.commit()
+def grant(uid, plan, charge_id, amount):
+    p = PLANS[plan]
+    with _lock, db() as c:
+        if c.execute("select 1 from pays where charge_id=?", (charge_id,)).fetchone():
+            return False
+        r = c.execute("select until from subs where user_id=?", (uid,)).fetchone()
+        base = max(time.time(), r[0] if r else 0)
+        c.execute("insert or replace into subs values(?,?,?)", (uid, "pro" if plan == "pro_trial" else plan, int(base + p["days"] * 86400)))
+        c.execute("insert into pays values(?,?,?,?,?)", (charge_id, uid, plan, amount, int(time.time())))
     return True
 
+def usage(key, bump=0):
+    now = int(time.time())
+    with _lock, db() as c:
+        r = c.execute("select win, n from usage where user_id=?", (key,)).fetchone()
+        win, n = (r if r and now - r[0] < FREE_WINDOW else (now, 0))
+        if bump: n += bump
+        c.execute("insert or replace into usage values(?,?,?)", (key, win, n))
+    return n, win + FREE_WINDOW
 
-def paywall():
-    return jsonify(error="Бесплатные запросы закончились", paywall=True), 402
+# ───────────────────────── HTTP-клиент ─────────────────────────
+def http(url, data=None, headers=None, method=None, timeout=60, raw=False):
+    body = None if data is None else (data if isinstance(data, bytes) else json.dumps(data).encode())
+    h = {"User-Agent": "VeloraServer/1.0"}
+    if isinstance(data, (dict, list)): h["Content-Type"] = "application/json"
+    h.update(headers or {})
+    req = urllib.request.Request(url, body, h, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            out = r.read()
+            return r.status, (out if raw else (json.loads(out) if out else {}))
+    except urllib.error.HTTPError as e:
+        out = e.read()
+        try: return e.code, (out if raw else json.loads(out))
+        except Exception: return e.code, (out if raw else {"error": out[:300].decode("utf-8", "ignore")})
 
+def multipart(fields, files):
+    b = uuid.uuid4().hex; out = b""
+    for k, v in fields.items():
+        out += f'--{b}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode()
+    for k, (name, data, ctype) in files.items():
+        out += f'--{b}\r\nContent-Disposition: form-data; name="{k}"; filename="{name}"\r\nContent-Type: {ctype}\r\n\r\n'.encode() + data + b"\r\n"
+    return out + f"--{b}--\r\n".encode(), f"multipart/form-data; boundary={b}"
 
-def yk(method: str, path: str, body=None):
-    r = requests.request(method, "https://api.yookassa.ru/v3" + path, json=body, auth=(YK_SHOP, YK_KEY),
-                         headers={"Idempotence-Key": uuid.uuid4().hex}, timeout=30)
-    r.raise_for_status()
-    return r.json()
+def tg(method, **params):
+    st, j = http(f"{TG_API}/bot{BOT_TOKEN}/{method}", params, timeout=35)
+    if not (isinstance(j, dict) and j.get("ok")): raise RuntimeError((j or {}).get("description", f"telegram HTTP {st}") if isinstance(j, dict) else "telegram error")
+    return j["result"]
 
+def check_init_data(init_data):
+    try:
+        d = dict(parse_qsl(init_data, keep_blank_values=True)); h = d.pop("hash", "")
+        chk = "\n".join(f"{k}={d[k]}" for k in sorted(d))
+        key = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
+        if not hmac.compare_digest(hmac.new(key, chk.encode(), hashlib.sha256).hexdigest(), h): return None
+        if time.time() - int(d.get("auth_date", 0)) > 86400 * 3: return None
+        return int(json.loads(d["user"])["id"])
+    except Exception:
+        return None
 
-def grant(pid: str, u: str):
-    with lock:
-        st = db.execute("select status from pays where id=?", (pid,)).fetchone()
-        if st and st[0] == "paid":
-            return
-        db.execute("update pays set status='paid' where id=?", (pid,))
-        db.execute("update users set until=max(until, ?)+? where uid=?", (time.time(), PERIOD, u))
-        db.commit()
-
-
-def sync(pid: str):
-    """Спрашиваем у ЮKassa настоящий статус платежа."""
-    r = db.execute("select uid from pays where id=?", (pid,)).fetchone()
-    if not r or MOCK:
-        return
-    p = yk("GET", "/payments/" + pid)
-    if p.get("status") == "succeeded" and p.get("paid"):
-        grant(pid, r[0])
-    elif p.get("status") == "canceled":
-        with lock:
-            db.execute("update pays set status='canceled' where id=?", (pid,))
-            db.commit()
-
-
-# ---------- нейросеть чата ----------
-def gemini_chat(msgs, system, max_tokens) -> str:
-    model = LLM_MODEL if "gemini" in LLM_MODEL else "gemini-2.5-flash"
-    contents = []
-    for m in msgs:
-        c = m.get("content")
-        parts = [{"text": c}] if isinstance(c, str) else []
-        if not isinstance(c, str):
-            for it in c or []:
-                if it.get("type") == "text":
-                    parts.append({"text": it.get("text", "")})
-                elif it.get("type") == "image_url":
-                    u = (it.get("image_url") or {}).get("url", "")
-                    if u.startswith("data:") and "," in u:
-                        head, b64 = u.split(",", 1)
-                        parts.append({"inline_data": {"mime_type": head[5:].split(";")[0] or "image/jpeg",
-                                                      "data": b64}})
-        if parts:
-            contents.append({"role": "model" if m.get("role") == "assistant" else "user", "parts": parts})
-    gen = {"temperature": 0.8, "maxOutputTokens": max(max_tokens, 400)}
-    if "flash" in model:
-        gen["thinkingConfig"] = {"thinkingBudget": 0}
-    r = requests.post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-        headers={"Content-Type": "application/json", "x-goog-api-key": GEMINI_KEY}, timeout=90,
-        json={"systemInstruction": {"parts": [{"text": system}]}, "contents": contents,
-              "generationConfig": gen})
-    if r.status_code != 200:
-        raise RuntimeError(f"Google код {r.status_code}: {r.text[:200]}")
-    cand = (r.json().get("candidates") or [{}])[0]
-    txt = "".join(p.get("text", "") for p in (cand.get("content") or {}).get("parts") or []).strip()
-    if not txt:
-        raise RuntimeError("Google вернул пустой ответ")
-    return txt
-
-
-def ask_llm(msgs, system=None, max_tokens=700) -> str:
-    """Сначала Google (если есть ключ), затем OpenRouter, ваш API, бесплатный Pollinations."""
-    if GEMINI_KEY:
+# ───────────────────────── нейросеть ─────────────────────────
+def llm_chat(messages, profile="", image=None):
+    msgs = []
+    if profile: msgs.append({"role": "system", "content": profile[:6000]})
+    msgs += [{"role": m.get("role", "user"), "content": str(m.get("content", ""))[:30000]} for m in messages[-24:] if m.get("content")]
+    if image and msgs and msgs[-1]["role"] == "user":
+        msgs[-1]["content"] = [{"type": "text", "text": msgs[-1]["content"]}, {"type": "image_url", "image_url": {"url": image}}]
+    hdr = {"Authorization": f"Bearer {LLM_KEY}"} if LLM_KEY else {}
+    body = {"model": LLM_MODEL, "messages": msgs, "temperature": 0.7, "max_tokens": LLM_MAX}
+    last = ""
+    for attempt in range(2):
+        st, j = http(f"{LLM_BASE}/chat/completions" if not LLM_BASE.endswith("/openai") else LLM_BASE, body, hdr, timeout=170)
         try:
-            return gemini_chat(msgs, system or PERSONA, max_tokens)
-        except Exception as e:  # noqa: BLE001
-            print("LLM Google:", type(e).__name__, str(e)[:300])
-    providers = []
-    if OR_KEY:
-        providers.append((OR_BASE + "/chat/completions", OR_KEY, OR_CHAT_MODEL))
-    if LLM_API_URL:
-        providers.append((LLM_API_URL, LLM_API_KEY, LLM_MODEL))
-    providers.append((FREE_LLM_URL, POLL_KEY, FREE_LLM_MODEL))
-    last = None
-    for url, key, model in providers:
-        try:
-            h = {"Content-Type": "application/json"}
-            if key:
-                h["Authorization"] = f"Bearer {key}"
-            sysmsg = system or PERSONA
+            t = j["choices"][0]["message"]["content"]
+            if t and t.strip(): return t
+        except Exception:
+            last = f"HTTP {st}: {json.dumps(j, ensure_ascii=False)[:200]}"
+        time.sleep(1.2)
+    raise RuntimeError("нейросеть не ответила (" + last + ")")
 
-            def call(messages, url=url, h=h, model=model):
-                return requests.post(url, headers=h, timeout=90, json={
-                    "model": model, "temperature": 0.8, "max_tokens": max_tokens, "messages": messages})
+def make_image(prompt, kind_style="", w=768, h=1024, src_image=None):
+    """Возвращает (bytes, расширение)."""
+    p = (prompt + (", " + kind_style if kind_style else "")).strip()
+    if IMG_PROVIDER == "openai":
+        hdr = {"Authorization": f"Bearer {IMG_KEY}"}
+        size = "1024x1024" if abs(w - h) < 100 else ("1536x1024" if w > h else "1024x1536")
+        st, j = http(f"{IMG_BASE if IMG_BASE != 'https://image.pollinations.ai' else 'https://api.openai.com/v1'}/images/generations",
+                     {"model": IMG_MODEL, "prompt": p, "size": size, "n": 1}, hdr, timeout=170)
+        d = (j.get("data") or [{}])[0] if isinstance(j, dict) else {}
+        if d.get("b64_json"): return base64.b64decode(d["b64_json"]), "png"
+        if d.get("url"): return http(d["url"], raw=True, timeout=60)[1], "png"
+        raise RuntimeError("картиночный сервис: " + json.dumps(j, ensure_ascii=False)[:200])
+    url = f"{IMG_BASE}/prompt/{quote(p)}?width={w}&height={h}&nologo=true&model={IMG_MODEL}&seed={uuid.uuid4().int % 10**6}"
+    hdr = {"Authorization": f"Bearer {IMG_KEY}"} if IMG_KEY else {}
+    last = ""
+    for _ in range(3):
+        st, data = http(url, headers=hdr, raw=True, timeout=150)
+        if st == 200 and data[:4] in (b"\xff\xd8\xff\xe0", b"\xff\xd8\xff\xe1", b"\xff\xd8\xff\xdb") or (st == 200 and data[:8] == b"\x89PNG\r\n\x1a\n"):
+            return data, ("png" if data[:4] == b"\x89PNG" else "jpg")
+        last = f"HTTP {st}: {data[:120]!r}"; time.sleep(2)
+    raise RuntimeError("не удалось создать картинку (" + last + ")")
 
-            r = call([{"role": "system", "content": sysmsg}] + msgs)
-            if r.status_code == 400:  # некоторые модели не принимают system: вкладываем в первое сообщение
-                folded = [dict(m) for m in msgs]
-                for m in folded:
-                    if m.get("role") == "user":
-                        c = m["content"]
-                        if isinstance(c, str):
-                            m["content"] = sysmsg + "\n\n---\n\n" + c
-                        else:
-                            m["content"] = [{"type": "text", "text": sysmsg + "\n\n---\n\n"}] + c
-                        break
-                r = call(folded)
-            if r.status_code != 200:
-                print("LLM", url.split("/")[2], r.status_code, r.text[:300])
-                last = f"{url.split('/')[2]} код {r.status_code}"
-                continue
-            txt = (r.json()["choices"][0]["message"]["content"] or "").strip()
-            if txt:
-                return txt
-        except Exception as e:  # noqa: BLE001
-            print("LLM", url.split("/")[2], type(e).__name__, str(e)[:200])
-            last = f"{url.split('/')[2]} {type(e).__name__}"
-    raise RuntimeError(str(last) if last else "пустой ответ")
+SIZES = {"1:1": (1024, 1024), "3:4": (768, 1024), "4:3": (1024, 768), "16:9": (1280, 720), "9:16": (720, 1280)}
+STYLES = {"cinematic": "cinematic lighting, film still", "photo": "photorealistic, high detail", "anime": "anime style", "3d": "3d render, octane",
+          "neon": "neon cyberpunk", "minimal": "minimal clean illustration"}
+JOBS = {}
 
+def run_job(jid, b):
+    try:
+        kind = b.get("kind", "image")
+        if kind == "video": raise RuntimeError("Видео нейросетью на сервере не включено, приложение соберёт его кодом")
+        if kind == "edit": raise RuntimeError("Правка фото на этом сервере не подключена")
+        w, h = SIZES.get(b.get("aspect") or "3:4", (768, 1024))
+        data, ext = make_image(str(b.get("prompt", ""))[:1500], STYLES.get(b.get("style"), ""), w, h)
+        name = f"{uuid.uuid4().hex[:16]}.{ext}"
+        open(os.path.join(MEDIA, name), "wb").write(data)
+        JOBS[jid].update(status="done", kind="image", url=f"/media/{name}")
+    except Exception as e:
+        JOBS[jid].update(status="error", error=str(e)[:300])
 
-# ---------- генерация ----------
-def auth_headers():
-    return {"Authorization": f"Bearer {POLL_KEY}"} if POLL_KEY else {}
+# ───────────────────────── ЮKassa ─────────────────────────
+def yk_auth():
+    return {"Authorization": "Basic " + base64.b64encode(f"{YK_SHOP}:{YK_SECRET}".encode()).decode()}
 
+def yk_create(uid, plan):
+    p = PLANS[plan]; val = f"{p['rub']}.00"
+    body = {"amount": {"value": val, "currency": "RUB"}, "capture": True,
+            "confirmation": {"type": "redirect", "return_url": E("RETURN_URL") or (f"https://t.me/{BOT_NAME[0]}" if BOT_NAME[0] else PUBLIC_URL or "https://t.me")},
+            "description": f"{p['title']} · {p['days']} дн.", "metadata": {"user_id": str(uid), "plan": plan}}
+    if YK_EMAIL:
+        body["receipt"] = {"customer": {"email": YK_EMAIL}, "items": [{"description": p["title"][:128], "quantity": "1.00",
+                           "amount": {"value": val, "currency": "RUB"}, "vat_code": 1, "payment_mode": "full_payment", "payment_subject": "service"}]}
+    st, j = http(f"{YK_API}/payments", body, {**yk_auth(), "Idempotence-Key": uuid.uuid4().hex}, timeout=30)
+    if st >= 300 or not isinstance(j, dict) or "confirmation" not in j:
+        raise RuntimeError(f"ЮKassa: {j.get('description') or j.get('error') or st}" if isinstance(j, dict) else f"ЮKassa HTTP {st}")
+    with _lock, db() as c:
+        c.execute("insert or replace into pending(pid,user_id,plan,ts,done) values(?,?,?,?,0)", (j["id"], uid, plan, int(time.time())))
+    return j["confirmation"]["confirmation_url"], j["id"]
 
-def mock_make(kind: str, path: Path, prompt: str):
-    time.sleep(3)
-    if kind == "image":
-        from PIL import Image, ImageDraw
-        h = int(hashlib.md5(prompt.encode()).hexdigest()[:6], 16)
-        im = Image.new("RGB", (768, 768), (8, 8, 12))
-        d = ImageDraw.Draw(im)
-        for i in range(6):
-            c = ((h >> (i * 2)) & 255, (h >> (i * 3)) & 255, 255 - ((h >> i) & 255))
-            x, y = 120 + (h >> i) % 400, 120 + (h >> (i + 3)) % 400
-            d.ellipse([x - 160, y - 160, x + 160, y + 160], fill=tuple(v // 3 for v in c))
-        im.save(path, "PNG")
-    else:
-        subprocess.run(
-            ["ffmpeg", "-y", "-f", "lavfi", "-i", "testsrc2=size=480x854:rate=24:duration=3",
-             "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast", str(path)],
-            check=True, capture_output=True)
+def yk_check(pid):
+    """Спрашиваем у ЮKassa статус платежа и, если он оплачен, выдаём подписку. Подделать вебхук так нельзя."""
+    st, j = http(f"{YK_API}/payments/{pid}", headers=yk_auth(), timeout=25)
+    if st != 200 or not isinstance(j, dict): return False
+    with _lock, db() as c:
+        r = c.execute("select user_id, plan from pending where pid=?", (pid,)).fetchone()
+    if not r: return False
+    if j.get("status") == "succeeded" and j.get("paid"):
+        am = j.get("amount") or {}
+        if am.get("currency") != "RUB" or float(am.get("value", 0)) + 0.001 < PLANS[r[1]]["rub"]:
+            print("ЮKassa: сумма платежа не совпадает с тарифом, подписка не выдана:", pid, am, file=sys.stderr); return False
+        grant(r[0], r[1], "yk:" + pid, int(float(am.get("value", 0))))
+        with _lock, db() as c: c.execute("update pending set done=1 where pid=?", (pid,))
+        return True
+    if j.get("status") == "canceled":
+        with _lock, db() as c: c.execute("update pending set done=1 where pid=?", (pid,))
+    return False
 
+def check_pending(uid):
+    if not YK_SECRET: return
+    with _lock, db() as c:
+        rows = c.execute("select pid from pending where user_id=? and done=0 and ts>?", (uid, int(time.time()) - 7200)).fetchall()
+    for (pid,) in rows:
+        try: yk_check(pid)
+        except Exception as e: print("yk_check:", e, file=sys.stderr)
 
-def or_headers():
-    return {"Authorization": f"Bearer {OR_KEY}", "Content-Type": "application/json"}
+# ───────────────────────── Telegram Stars ─────────────────────────
+def stars_invoice(uid, plan):
+    p = PLANS[plan]
+    return tg("createInvoiceLink", title=p["title"], description=p["desc"], payload=json.dumps({"u": uid, "p": plan}),
+              provider_token="", currency="XTR", prices=[{"label": p["title"], "amount": p["stars"]}])
 
-
-def or_ok(r):
-    if r.status_code >= 400:
-        raise RuntimeError(f"код {r.status_code}: {r.text[:200]}")
-
-
-def or_image(prompt: str, aspect: str, src: str = "") -> tuple:
-    body = {"model": OR_EDIT_MODEL if src else OR_IMAGE_MODEL, "prompt": prompt, "n": 1}
-    if aspect in ("1:1", "3:4", "16:9", "9:16"):
-        body["aspect_ratio"] = aspect
-    if src:  # правка: исходное фото передаём ссылкой
-        body["input_references"] = [{"type": "image_url", "image_url": {"url": src}}]
-    r = requests.post(OR_BASE + "/images", headers=or_headers(), json=body, timeout=240)
-    or_ok(r)
-    item = r.json()["data"][0]
-    return base64.b64decode(item["b64_json"]), item.get("media_type") or "image/png"
-
-
-def or_video(prompt: str, aspect: str, dur: int) -> tuple:
-    body = {"model": OR_VIDEO_MODEL, "prompt": prompt, "duration": dur,
-            "aspect_ratio": "9:16" if aspect == "9:16" else "16:9"}
-    r = requests.post(OR_BASE + "/videos", headers=or_headers(), json=body, timeout=60)
-    or_ok(r)
-    job = r.json()
-    poll = urllib.parse.urljoin("https://openrouter.ai", job["polling_url"])
-    deadline = time.time() + 540
-    while time.time() < deadline:
-        time.sleep(6)
-        j = requests.get(poll, headers=or_headers(), timeout=30).json()
-        st = j.get("status")
-        if st == "completed":
-            for u in j.get("unsigned_urls") or []:
-                v = requests.get(u, headers=or_headers(), timeout=300)
-                if v.status_code == 200 and len(v.content) > 1000:
-                    return v.content, "video/mp4"
-            v = requests.get(f"{OR_BASE}/videos/{job['id']}/content", headers=or_headers(), timeout=300)
-            v.raise_for_status()
-            return v.content, "video/mp4"
-        if st in ("failed", "cancelled", "expired"):
-            raise RuntimeError("видео не получилось: " + str(j.get("error", st))[:120])
-    raise RuntimeError("видео делается слишком долго")
-
-
-def google_image(prompt: str, aspect: str, src_url: str = "") -> tuple:
-    """Картинка через Google Gemini. Правка: исходник читаем из папки media."""
-    parts = [{"text": prompt}]
-    if src_url:
-        f = MEDIA / Path(urllib.parse.urlparse(src_url).path).name
-        parts.append({"inline_data": {"mime_type": "image/jpeg",
-                                      "data": base64.b64encode(f.read_bytes()).decode()}})
-    gen = {"responseModalities": ["IMAGE"]}
-    if not src_url and aspect in ("1:1", "3:4", "16:9", "9:16"):
-        gen["imageConfig"] = {"aspectRatio": aspect}
-    r = requests.post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_IMAGE_MODEL}:generateContent",
-        headers={"Content-Type": "application/json", "x-goog-api-key": GEMINI_KEY},
-        json={"contents": [{"parts": parts}], "generationConfig": gen}, timeout=120)
-    if r.status_code != 200:
-        raise RuntimeError(f"Google код {r.status_code}: {r.text[:200]}")
-    for c in r.json().get("candidates") or []:
-        for pt in (c.get("content") or {}).get("parts") or []:
-            d = pt.get("inlineData") or pt.get("inline_data")
-            if d and d.get("data"):
-                return base64.b64decode(d["data"]), d.get("mimeType") or d.get("mime_type") or "image/png"
-    raise RuntimeError("Google не вернул картинку: " + r.text[:200])
-
-
-def fetch(kind: str, prompt: str, opts: dict) -> tuple:
-    if GEMINI_KEY and not MOCK and kind in ("image", "edit"):  # сначала Google, при ошибке дальше
-        try:
-            style = STYLES.get(opts.get("style", "none"), "")
-            full = prompt.strip()[:1500] if kind == "edit" else (prompt.strip() + style)[:1500]
-            return google_image(full, opts.get("aspect", "1:1"), opts.get("src", "") if kind == "edit" else "")
-        except Exception as e:  # noqa: BLE001
-            print("Google image:", type(e).__name__, str(e)[:300])
-    if OR_KEY and not MOCK:  # затем OpenRouter, при ошибке бесплатный Pollinations
-        try:
-            style = STYLES.get(opts.get("style", "none"), "")
-            full = (prompt.strip() + style)[:1500]
-            aspect = opts.get("aspect", "1:1")
-            if kind == "video":
-                return or_video(full, aspect, int(opts.get("duration", 4)))
-            return or_image(prompt.strip()[:1500] if kind == "edit" else full, aspect,
-                            opts.get("src", "") if kind == "edit" else "")
-        except Exception as e:  # noqa: BLE001
-            print("OpenRouter:", type(e).__name__, str(e)[:200])
-    return fetch_free(kind, prompt, opts)
-
-
-def _find_video_path(x):
-    """Ищет путь к видеофайлу в ответе gradio (строка, список, словарь)."""
-    if isinstance(x, str):
-        return x if x.lower().split("?")[0].endswith((".mp4", ".webm", ".mov")) else None
-    if isinstance(x, dict):
-        for k in ("video", "path", "name", "url"):
-            if k in x:
-                r = _find_video_path(x[k])
-                if r:
-                    return r
-        for v in x.values():
-            r = _find_video_path(v)
-            if r:
-                return r
-    if isinstance(x, (list, tuple)):
-        for v in x:
-            r = _find_video_path(v)
-            if r:
-                return r
+def _stars_payload(raw):
+    """Разбирает payload счёта. Возвращает (user_id, plan) или None, если это не наш счёт."""
+    try:
+        pl = json.loads(raw)
+        if isinstance(pl, dict) and pl.get("p") in PLANS: return int(pl["u"]), pl["p"]
+    except Exception: pass
     return None
 
+def handle_update(u):
+    if "pre_checkout_query" in u:
+        q = u["pre_checkout_query"]; pl = _stars_payload(q.get("invoice_payload", ""))
+        ok = bool(pl) and q.get("currency") == "XTR" and q.get("total_amount") == PLANS[pl[1]]["stars"]
+        a = {"pre_checkout_query_id": q["id"], "ok": ok}
+        if not ok: a["error_message"] = "Не удалось проверить счёт, попробуйте ещё раз"
+        tg("answerPreCheckoutQuery", **a)
+    m = u.get("message") or {}; sp = m.get("successful_payment")
+    if sp and sp.get("currency") == "XTR":
+        pl = _stars_payload(sp.get("invoice_payload", ""))
+        if not pl:
+            print("Stars: платёж с чужим/битым payload, пропущен:", str(sp)[:300], file=sys.stderr); return
+        uid, plan = pl; paid = int(sp.get("total_amount", 0))
+        if paid < PLANS[plan]["stars"]:
+            print(f"Stars: ВНИМАНИЕ, оплачено {paid} ⭐ вместо {PLANS[plan]['stars']} за {plan}, user {uid}, подписка не выдана:", sp.get("telegram_payment_charge_id"), file=sys.stderr); return
+        if grant(uid, plan, "tg:" + (sp.get("telegram_payment_charge_id") or uuid.uuid4().hex), paid):
+            try: tg("sendMessage", chat_id=m["chat"]["id"], text="Оплата прошла ⭐ Подписка подключена. Вернитесь в приложение.")
+            except Exception: pass
 
-def hf_video(prompt: str) -> tuple:
-    """Бесплатное видео из публичных Hugging Face Spaces (ZeroGPU). Качество так себе, бывают очереди."""
-    try:
-        from gradio_client import Client
-    except ImportError:
-        raise RuntimeError("нет gradio_client: pip install gradio_client")
-    errs = []
-    for space in HF_VIDEO_SPACES:
+def poll_loop():
+    try: tg("deleteWebhook")
+    except Exception as e: print("deleteWebhook:", e)
+    off = 0
+    while True:
         try:
-            try:
-                client = Client(space, token=HF_TOKEN or None, verbose=False)
-            except TypeError:  # старая версия gradio_client
-                client = Client(space, hf_token=HF_TOKEN or None, verbose=False)
-            info = client.view_api(return_format="dict", print_info=False) or {}
-            for api_name, ep in (info.get("named_endpoints") or {}).items():
-                params = ep.get("parameters") or []
-                kwargs, ok, has_prompt = {}, True, False
-                for p in params:
-                    pn = p.get("parameter_name") or p.get("label") or ""
-                    low = (pn + " " + str(p.get("label", ""))).lower()
-                    if "prompt" in low and "negative" not in low and not has_prompt:
-                        kwargs[pn] = prompt
-                        has_prompt = True
-                    elif p.get("parameter_has_default"):
-                        continue  # остальное оставляем по умолчанию
-                    else:
-                        ok = False  # обязательный параметр (например, картинка) нам нечем заполнить
-                        break
-                if not (ok and has_prompt):
-                    continue
-                out = client.submit(api_name=api_name, **kwargs).result(timeout=420)
-                path = _find_video_path(out)
-                if path and os.path.exists(path):
-                    with open(path, "rb") as f:
-                        return f.read(), "video/webm" if path.endswith(".webm") else "video/mp4"
-            errs.append(f"{space}: нет подходящего метода")
-        except Exception as e:  # noqa: BLE001
-            errs.append(f"{space}: {type(e).__name__} {str(e)[:80]}")
-            print("HF video:", space, type(e).__name__, str(e)[:300])
-    raise RuntimeError("; ".join(errs)[:300] or "нет Spaces")
+            for u in tg("getUpdates", offset=off, timeout=25, allowed_updates=["pre_checkout_query", "message"]):
+                off = u["update_id"] + 1
+                try: handle_update(u)
+                except Exception as e: print("update error:", e, file=sys.stderr)
+        except Exception as e:
+            print("poll error:", e, file=sys.stderr); time.sleep(3)
 
+BOT_NAME = [""]
+SESS = {}      # sid -> время выдачи
+TRIES = {}     # ip -> [время попыток]
 
-def fetch_free_video(full: str, aspect: str, dur: int) -> tuple:
-    errs, ar = [], ("9:16" if aspect == "9:16" else "16:9")
-    stop = False
-    for model in POLL_VIDEO_MODELS:
-        if stop:
-            break
-        # сначала со всеми параметрами, при 400 ещё раз только с моделью
-        for params in ({"model": model, "duration": dur, "aspectRatio": ar}, {"model": model}):
-            try:
-                q = dict(params, **({"key": POLL_KEY} if POLL_KEY else {}))
-                r = requests.get(VIDEO_URL + urllib.parse.quote(full, safe=""), params=q,
-                                 headers=auth_headers(), timeout=300)
-            except requests.RequestException as e:
-                errs.append(f"{model}: сеть {type(e).__name__}")
-                break
-            ct = r.headers.get("content-type", "").split(";")[0]
-            if r.status_code == 200 and ct.startswith("video/"):
-                return r.content, ct
-            errs.append(f"{model} {r.status_code} {r.text[:60].strip()}")
-            print("Pollinations video:", model, r.status_code, r.text[:200])
-            if r.status_code in (401, 402, 403, 429):  # ключ/лимит — другие модели не помогут
-                stop = True
-            if r.status_code != 400:
-                break
-    try:
-        return hf_video(full)
-    except Exception as e:  # noqa: BLE001
-        errs.append(f"HF: {str(e)[:120]}")
-    raise RuntimeError("видео не вышло: " + "; ".join(errs)[:180])
+# ───────────────────────── HTTP-сервер ─────────────────────────
+class H(BaseHTTPRequestHandler):
+    server_version = "Velora/1"
+    protocol_version = "HTTP/1.1"
+    def log_message(self, f, *a): print(self.address_string(), f % a)
+    def _send(self, code, data=None, raw=None, ctype="application/json; charset=utf-8", extra=None):
+        b = raw if raw is not None else json.dumps(data if data is not None else {}, ensure_ascii=False).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", ctype); self.send_header("Content-Length", str(len(b)))
+        self.send_header("Access-Control-Allow-Origin", ORIGIN); self.send_header("Access-Control-Allow-Headers", "*"); self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+        for k, v in (extra or {}).items(): self.send_header(k, v)
+        self.end_headers()
+        if self.command != "HEAD": self.wfile.write(b)
+    def _body(self):
+        try: return json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+        except Exception: return {}
+    def _uid(self):
+        raw = self.headers.get("X-Init-Data") or self.headers.get("X-Telegram-Init-Data") or ""
+        return check_init_data(raw) if raw and BOT_TOKEN else None
+    def _key(self):
+        u = self._uid()
+        return (u, str(u)) if u else (None, "anon:" + (self.headers.get("X-Anon-Id") or self.client_address[0])[:40])
+    def _authed(self):
+        if not PASSWORD: return True
+        s = SESS.get(self.headers.get("X-Sess") or "")
+        return bool(s and time.time() - s < 12 * 3600)
+    def do_OPTIONS(self): self._send(204, raw=b"")
+    do_HEAD = lambda self: self.do_GET()
 
+    def do_GET(self):
+        path = self.path.split("?")[0]
+        if path in ("/", "/index.html"):
+            try: return self._send(200, raw=open(INDEX, "rb").read(), ctype="text/html; charset=utf-8", extra={"Cache-Control": "no-cache"})
+            except OSError: return self._send(404, {"error": f"нет файла {INDEX}"})
+        if path == "/health": return self._send(200, {"ok": True, "llm": bool(LLM_KEY or "pollinations" in LLM_BASE), "yookassa": bool(YK_SECRET), "stars": bool(BOT_TOKEN)})
+        if path.startswith("/media/"):
+            f = os.path.join(MEDIA, os.path.basename(unquote(path)))
+            if os.path.isfile(f):
+                return self._send(200, raw=open(f, "rb").read(), ctype=mimetypes.guess_type(f)[0] or "application/octet-stream", extra={"Cache-Control": "public,max-age=86400"})
+            return self._send(404, {"error": "нет файла"})
+        if path == "/api/me": return self._me()
+        if path.startswith("/api/job/"):
+            j = JOBS.get(path.rsplit("/", 1)[-1])
+            return self._send(200, j) if j else self._send(404, {"status": "error", "error": "задача не найдена"})
+        if path == "/api/stars/me":
+            uid = self._uid(); return self._send(200, get_sub(uid)) if uid else self._send(401, {"error": "Откройте приложение через бота в Telegram"})
+        self._send(404, {"error": "not found"})
 
-def fetch_free(kind: str, prompt: str, opts: dict) -> tuple:
-    style = STYLES.get(opts.get("style", "none"), "")
-    full = (prompt.strip() + style)[:1500]
-    aspect = opts.get("aspect", "1:1")
-    seed = opts.get("seed") or int(time.time()) % 1_000_000
-    if kind == "video":
-        return fetch_free_video(full, aspect, int(opts.get("duration", 4)))
-    if kind in ("image", "edit"):
-        w, h = IMAGE_SIZES.get(aspect, (1024, 1024))
-        params = {"model": "flux", "width": w, "height": h, "nologo": "true", "seed": seed}
-        if kind == "edit":  # картинка -> картинка: исходник отдаём по публичной ссылке
-            params = {"model": "kontext", "image": opts.get("src", ""), "nologo": "true", "seed": seed}
-        attempts = [(GEN_URL, auth_headers()), (OLD_IMG_URL, {})]
-    else:
-        dur = int(opts.get("duration", 4))
-        params = {"model": os.getenv("VIDEO_MODEL", "seedance"), "duration": dur,
-                  "aspectRatio": "9:16" if aspect == "9:16" else "16:9"}
-        attempts = [(GEN_URL, auth_headers())]
-    last = "нет ответа"
-    for base, headers in attempts:
+    def _me(self):
+        if not self._authed(): return self._send(401, {"error": "auth"})
+        uid, key = self._key(); s = get_sub(uid) if uid else {"active": False, "sub_until": 0, "plan": "free"}
+        if uid and not s["active"]:
+            check_pending(uid); s = get_sub(uid)
+        n, reset = usage(key)
+        self._send(200, {"free_total": FREE_MSGS, "used": 0 if BETA else n, "reset": 0 if BETA else reset, "active": s["active"], "sub_until": s["sub_until"],
+                         "plan": s["plan"], "price": PLANS["plus"]["rub"], "beta": BETA and not s["active"],
+                         "prices": {k: {"rub": v["rub"], "stars": v["stars"]} for k, v in PLANS.items()}})
+
+    def do_POST(self):
+        path = self.path.split("?")[0]; b = self._body()
         try:
-            r = requests.get(base + urllib.parse.quote(full, safe=""), params=params,
-                             headers=headers, timeout=300)
-            ct = r.headers.get("content-type", "").split(";")[0]
-            if r.status_code == 200 and ct.startswith(("image/", "video/")):
-                return r.content, ct
-            last = f"сервис ответил {r.status_code}"
-            if r.status_code in (401, 402, 403):
-                last += " — для этого нужен ключ"
-        except requests.RequestException as e:
-            last = f"сеть: {type(e).__name__}"
-    raise RuntimeError(last)
+            if path == "/tg/webhook":
+                if self.headers.get("X-Telegram-Bot-Api-Secret-Token") != SECRET: return self._send(403, {"error": "forbidden"})
+                handle_update(b); return self._send(200, {"ok": True})
+            if path == "/yookassa/webhook":
+                pid = ((b.get("object") or {}).get("id")) if b.get("event") == "payment.succeeded" else None
+                if pid and YK_SECRET: yk_check(pid)
+                return self._send(200, {"ok": True})
+            if path == "/api/unlock":
+                ip = self.client_address[0]; now = time.time(); t = [x for x in TRIES.get(ip, []) if now - x < 600]
+                if len(t) >= 10: return self._send(429, {"error": "Слишком много попыток, подождите"})
+                if PASSWORD and not hmac.compare_digest(str(b.get("password", "")), PASSWORD):
+                    TRIES[ip] = t + [now]; return self._send(401, {"error": "Неверный пароль"})
+                sid = secrets.token_urlsafe(24); SESS[sid] = now; return self._send(200, {"sid": sid})
+            if not self._authed(): return self._send(401, {"error": "auth"})
+            if path == "/api/chat": return self._chat(b)
+            if path == "/api/generate":
+                uid, key = self._key()
+                jid = uuid.uuid4().hex[:12]; JOBS[jid] = {"id": jid, "status": "pending"}
+                threading.Thread(target=run_job, args=(jid, b), daemon=True).start()
+                return self._send(200, {"id": jid})
+            if path in ("/api/pay", "/api/stars/invoice"): return self._pay(b, path)
+            if path == "/api/tts": return self._tts(b)
+            if path == "/api/stt": return self._stt(b)
+            if path == "/api/send": return self._send_file(b)
+            self._send(404, {"error": "not found"})
+        except Exception as e:
+            print("ошибка запроса", path, e, file=sys.stderr)
+            self._send(500, {"error": str(e)[:300]})
 
+    def _chat(self, b):
+        uid, key = self._key(); s = get_sub(uid) if uid else {"active": False}
+        if not BETA and not s["active"]:
+            n, _ = usage(key)
+            if n >= FREE_MSGS: return self._send(402, {"error": "Лимит исчерпан"})
+        reply = llm_chat(b.get("messages") or [], b.get("profile") or "", b.get("image"))
+        if not BETA: usage(key, 1)
+        self._send(200, {"reply": reply, "ticket": ""})
 
-def run_job(jid: str, kind: str, prompt: str, opts: dict):
-    try:
-        if MOCK:
-            ext = "mp4" if kind == "video" else "png"
-            path = MEDIA / f"{jid}.{ext}"
-            mock_make("video" if kind == "video" else "image", path, prompt)
+    def _pay(self, b, path):
+        uid = self._uid()
+        if not uid: return self._send(401, {"error": "Откройте приложение через бота в Telegram"})
+        plan = b.get("plan") if b.get("plan") in PLANS else "plus"
+        method = "stars" if path == "/api/stars/invoice" else (b.get("method") or "rub")
+        if method == "stars":
+            if not BOT_TOKEN: return self._send(503, {"error": "На сервере не задан BOT_TOKEN"})
+            try: return self._send(200, {"invoice": stars_invoice(uid, plan), "plan": plan})
+            except Exception as e: return self._send(502, {"error": f"Telegram не создал счёт: {e}"})
+        if not YK_SECRET: return self._send(503, {"error": "ЮKassa: на сервере не задан YOOKASSA_SECRET"})
+        try:
+            url, pid = yk_create(uid, plan); self._send(200, {"url": url, "id": pid, "plan": plan})
+        except Exception as e: self._send(502, {"error": str(e)})
+
+    def _tts(self, b):
+        if not TTS_BASE: return self._send(501, {"error": "озвучка на сервере не настроена"})
+        st, data = http(f"{TTS_BASE}/audio/speech", {"model": TTS_MODEL, "input": str(b.get("text", ""))[:3500], "voice": b.get("voice") or "nova"},
+                        {"Authorization": f"Bearer {TTS_KEY}"}, raw=True, timeout=90)
+        if st != 200: return self._send(502, {"error": f"озвучка HTTP {st}"})
+        self._send(200, raw=data, ctype="audio/mpeg")
+
+    def _stt(self, b):
+        if not STT_BASE: return self._send(501, {"error": "распознавание речи на сервере не настроено"})
+        mime = b.get("mime") or "audio/webm"; ext = "mp4" if "mp4" in mime else "webm"
+        body, ct = multipart({"model": STT_MODEL, "language": "ru"}, {"file": (f"a.{ext}", base64.b64decode(b.get("audio", "")), mime)})
+        st, j = http(f"{STT_BASE}/audio/transcriptions", body, {"Authorization": f"Bearer {STT_KEY}", "Content-Type": ct}, timeout=90)
+        if st != 200 or "text" not in j: return self._send(502, {"error": "не удалось распознать речь"})
+        self._send(200, {"text": j["text"]})
+
+    def _send_file(self, b):
+        uid = self._uid(); name = os.path.basename(str(b.get("name", "")))
+        f = os.path.join(MEDIA, name)
+        if not uid or not os.path.isfile(f): return self._send(404, {"error": "нет файла"})
+        ctype = mimetypes.guess_type(f)[0] or "application/octet-stream"
+        body, ct = multipart({"chat_id": str(uid)}, {"document": (name, open(f, "rb").read(), ctype)})
+        st, j = http(f"{TG_API}/bot{BOT_TOKEN}/sendDocument", body, {"Content-Type": ct}, timeout=60)
+        self._send(200 if st == 200 else 502, {"ok": st == 200})
+
+def main():
+    if BOT_TOKEN:
+        try: BOT_NAME[0] = tg("getMe").get("username", "")
+        except Exception as e: print("getMe:", e)
+        if "--poll" in sys.argv or not PUBLIC_URL:
+            threading.Thread(target=poll_loop, daemon=True).start(); print("платежи Stars: getUpdates")
         else:
-            data, ct = fetch(kind, prompt, opts)
-            ext = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp",
-                   "video/mp4": "mp4", "video/webm": "webm"}.get(ct, "bin")
-            path = MEDIA / f"{jid}.{ext}"
-            path.write_bytes(data)
-        jobs[jid].update(status="done", url=f"/media/{path.name}",
-                         kind="video" if kind == "video" else "image")
-    except Exception as e:  # noqa: BLE001
-        jobs[jid].update(status="error", error=str(e)[:200])
-
-
-# ---------- маршруты ----------
-@app.get("/")
-def index():
-    folder = BASE if (BASE / "index.html").exists() else BASE / "static"
-    return send_from_directory(folder, "index.html")
-
-
-@app.get("/api/config")
-def config():
-    return jsonify(styles=list(STYLES), mock=MOCK)
-
-
-@app.post("/api/generate")
-def generate():
-    check_access()
-    rate_limit(request.headers.get("X-Forwarded-For", request.remote_addr or "x"))
-    body = request.get_json(silent=True) or {}
-    kind = body.get("kind")
-    prompt = (body.get("prompt") or "").strip()
-    if kind not in ("image", "video", "edit") or not (2 <= len(prompt) <= 600):
-        return jsonify(error="Опишите, что создать (2–600 символов)"), 400
-    raw_img = None
-    if kind == "edit":
-        src = body.get("image") or ""
-        mm = re.match(r"data:image/(?:jpeg|png|webp);base64,(.+)$", src, re.S)
-        if not mm or len(src) > 4_000_000:
-            return jsonify(error="Добавьте фото, которое нужно изменить"), 400
-        try:
-            raw_img = base64.b64decode(mm.group(1))
-        except Exception:  # noqa: BLE001
-            return jsonify(error="Не удалось прочитать фото"), 400
-    u = uid()
-    tk = tickets.pop(body.get("ticket"), None)  # картинка, которую Velora рисует сама по ходу чата
-    if not (tk and tk[0] == u and tk[1] > time.time()) and not spend(u):
-        return paywall()
-    jid = uuid.uuid4().hex[:12]
-    jobs[jid] = {"status": "working", "t": time.time()}
-    opts = {k: body.get(k) for k in ("style", "aspect", "duration", "seed")}
-    if raw_img:
-        sname = f"src_{jid}.jpg"
-        (MEDIA / sname).write_bytes(raw_img)
-        opts["src"] = (WEBAPP_URL or request.host_url.rstrip("/")) + "/media/" + sname
-    threading.Thread(target=run_job, args=(jid, kind, prompt, opts), daemon=True).start()
-    return jsonify(id=jid)
-
-
-def mock_reply(last: str, photo=False) -> str:
-    low = last.lower()
-    if photo:
-        return "На фото спокойная сцена: мягкий свет, чистая композиция, главный объект в центре."
-    if any(w in low for w in ("нарису", "фото", "картин")):
-        return ("Хорошо, сейчас создам: мягкий свет, глубина, чистые цвета. "
-                "[[image: a misty morning over a calm sea, soft painterly watercolor look, muted colors]]")
-    if "видео" in low:
-        return ("Сделаю медленный кадр, пока поднимается рассвет. "
-                "[[video: slow camera glide over calm water at dawn, thin mist rising, painterly look]]")
-    if "кто ты" in low or "умеешь" in low:
-        return "Я Velora, ИИ-помощница этой студии. Разговариваю, придумываю идеи и рисую фото и видео."
-    return "Я здесь. Расскажи, что хочешь создать, или просто поговорим."
-
-
-def stt_cloudflare(audio_b64: str) -> str:
-    r = requests.post(
-        f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT}/ai/run/@cf/openai/whisper-large-v3-turbo",
-        headers={"Authorization": f"Bearer {CF_TOKEN}", "Content-Type": "application/json"},
-        json={"audio": audio_b64, "language": "ru"}, timeout=60)
-    if r.status_code != 200:
-        raise RuntimeError(f"Cloudflare код {r.status_code}: {r.text[:200]}")
-    return ((r.json().get("result") or {}).get("text") or "").strip()
-
-
-def stt_gemini(audio_b64: str, mime: str) -> str:
-    model = os.getenv("GEMINI_STT_MODEL", "gemini-2.5-flash")
-    r = requests.post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-        headers={"Content-Type": "application/json", "x-goog-api-key": GEMINI_KEY},
-        json={"contents": [{"parts": [
-            {"text": "Дословно запиши речь из аудио на том языке, на котором она звучит. "
-                     "Верни только текст. Если речи нет, верни пустую строку."},
-            {"inline_data": {"mime_type": mime, "data": audio_b64}}]}]}, timeout=60)
-    if r.status_code != 200:
-        raise RuntimeError(f"Google код {r.status_code}: {r.text[:200]}")
-    parts = (r.json().get("candidates") or [{}])[0].get("content", {}).get("parts") or []
-    return "".join(p.get("text", "") for p in parts).strip()
-
-
-@app.post("/api/stt")
-def stt():
-    """Голос в текст для режима разговора: Cloudflare Whisper (русский), запасной вариант Google."""
-    check_access()
-    rate_limit("stt:" + request.headers.get("X-Forwarded-For", request.remote_addr or "x"), limit=60)
-    body = request.get_json(silent=True) or {}
-    audio = body.get("audio") or ""
-    mime = (body.get("mime") or "audio/webm").split(";")[0]
-    if not (CF_ACCOUNT and CF_TOKEN) and not GEMINI_KEY:
-        return jsonify(error="Для голоса добавьте CF_ACCOUNT_ID и CF_API_TOKEN"), 503
-    if not audio or len(audio) > 6_000_000:
-        return jsonify(error="Запись слишком длинная или пустая"), 400
-    attempts = []
-    if CF_ACCOUNT and CF_TOKEN:
-        attempts.append(("Cloudflare", lambda: stt_cloudflare(audio)))
-    if GEMINI_KEY:
-        attempts.append(("Google", lambda: stt_gemini(audio, mime)))
-    for name, fn in attempts:
-        try:
-            return jsonify(text=fn())
-        except Exception as e:  # noqa: BLE001
-            print("STT", name, type(e).__name__, str(e)[:300])
-    return jsonify(error="Не удалось распознать речь"), 502
-
-
-@app.post("/api/tts")
-def tts():
-    """Текст в голос (русский) через edge-tts. Возвращает mp3."""
-    check_access()
-    rate_limit("tts:" + request.headers.get("X-Forwarded-For", request.remote_addr or "x"), limit=200)
-    text = re.sub(r"[*_`#>\[\]]", "", str((request.get_json(silent=True) or {}).get("text", ""))).strip()[:1500]
-    if not text:
-        return jsonify(error="Пустой текст"), 400
-    voice = TTS_VOICE if re.search(r"[а-яё]", text, re.I) else os.getenv("TTS_VOICE_EN", "en-US-AriaNeural")
-    try:
-        import asyncio
-        import edge_tts
-
-        async def run():
-            out = b""
-            async for ch in edge_tts.Communicate(text, voice).stream():
-                if ch["type"] == "audio":
-                    out += ch["data"]
-            return out
-
-        data = asyncio.run(run())
-        if not data:
-            raise RuntimeError("пустой звук")
-        return app.response_class(data, mimetype="audio/mpeg")
-    except Exception as e:  # noqa: BLE001
-        print("TTS", type(e).__name__, str(e)[:200])
-        return jsonify(error="Озвучка недоступна"), 502
-
-
-@app.post("/api/chat")
-def chat():
-    check_access()
-    rate_limit("chat:" + request.headers.get("X-Forwarded-For", request.remote_addr or "x"), limit=120)
-    body = request.get_json(silent=True) or {}
-    msgs = [m for m in (body.get("messages") or [])
-            if m.get("role") in ("user", "assistant") and isinstance(m.get("content"), str)]
-    if not msgs or msgs[-1]["role"] != "user":
-        return jsonify(error="Пустое сообщение"), 400
-    msgs = [{"role": m["role"], "content": m["content"][:2000]} for m in msgs]
-    u = uid()
-    if not spend(u):
-        return paywall()
-    text0 = msgs[-1]["content"]
-    image = body.get("image")
-    if isinstance(image, str) and image.startswith("data:image/") and len(image) < 4_000_000:
-        msgs[-1]["content"] = [{"type": "text", "text": text0},
-                               {"type": "image_url", "image_url": {"url": image}}]
-    else:
-        image = None
-
-    def done(reply):
-        out = {"reply": reply}
-        if re.search(r"\[\[(image|video):", reply, re.I):
-            t = uuid.uuid4().hex
-            tickets[t] = (u, time.time() + 600)
-            out["ticket"] = t
-        return jsonify(out)
-
-    if MOCK:
-        time.sleep(1.2)
-        return done(mock_reply(text0, bool(image)))
-    try:
-        prof = str(body.get("profile") or "")[:900].strip()
-        system = PERSONA + ("\n\nПожелания пользователя (учитывай, если они не противоречат правилам выше): "
-                            + prof if prof else "")
-        return done(ask_llm(msgs, system=system))
-    except Exception as e:  # noqa: BLE001
-        return jsonify(error=f"Нейросеть не ответила ({e})"), 502
-
-
-@app.post("/api/unlock")
-def unlock():
-    check_access(gate=False)
-    if not BETA_GATE:
-        return jsonify(sid="open")
-    u = uid()
-    rate_limit("unlock:" + u, limit=8, per=600)
-    pw = str((request.get_json(silent=True) or {}).get("password", ""))
-    if not hmac.compare_digest(pw.encode(), BETA_PASSWORD.encode()):
-        return jsonify(error="Неверный пароль"), 401
-    now = time.time()
-    with lock:
-        for k in [k for k, v in sessions.items() if v[1] < now]:
-            sessions.pop(k, None)
-        sid = secrets.token_urlsafe(24)
-        sessions[sid] = (u, now + SESSION_TTL)
-    return jsonify(sid=sid)
-
-
-@app.get("/api/me")
-def me():
-    check_access()
-    u = uid()
-    try:
-        for (pid,) in db.execute("select id from pays where uid=? and status='pending'", (u,)).fetchall():
-            sync(pid)
-    except Exception:  # noqa: BLE001
-        pass
-    used, until, lk = row(u)
-    return jsonify(free_total=FREE, used=min(used, FREE), beta=UNLIMITED,
-                   active=UNLIMITED or until > time.time(), sub_until=until,
-                   price=int(float(PRICE)), reset=lk)
-
-
-@app.post("/api/pay")
-def pay():
-    check_access()
-    u = uid()
-    if MOCK:
-        pid = "mock" + uuid.uuid4().hex[:8]
-        url = request.host_url + "api/mock-pay/" + pid
-    else:
-        if not (YK_SHOP and YK_KEY):
-            return jsonify(error="Оплата ещё не подключена"), 503
-        body = {"amount": {"value": PRICE, "currency": "RUB"}, "capture": True,
-                "confirmation": {"type": "redirect", "return_url": YK_RETURN},
-                "description": "Velora, подписка на 30 дней", "metadata": {"uid": u}}
-        if YK_EMAIL:
-            body["receipt"] = {"customer": {"email": YK_EMAIL}, "items": [{
-                "description": "Подписка Velora, 30 дней", "quantity": "1",
-                "amount": {"value": PRICE, "currency": "RUB"},
-                "vat_code": int(os.getenv("YOOKASSA_VAT_CODE", "1")),
-                "payment_subject": "service", "payment_mode": "full_payment"}]}
-        try:
-            p = yk("POST", "/payments", body)
-        except Exception:  # noqa: BLE001
-            return jsonify(error="ЮKassa не ответила, попробуйте ещё раз"), 502
-        pid, url = p["id"], p["confirmation"]["confirmation_url"]
-    with lock:
-        db.execute("insert into pays values(?,?,?,?)", (pid, u, "pending", time.time()))
-        db.commit()
-    return jsonify(url=url, id=pid)
-
-
-@app.get("/api/mock-pay/<pid>")
-def mock_pay(pid):
-    r = db.execute("select uid from pays where id=?", (pid,)).fetchone()
-    if not MOCK or not r:
-        abort(404)
-    grant(pid, r[0])
-    return ("<meta name=viewport content='width=device-width'><body style='background:#09090b;color:#eee;"
-            "font-family:sans-serif;display:grid;place-items:center;height:100vh;text-align:center'>"
-            "Тестовая оплата прошла. Вернитесь в приложение.")
-
-
-@app.post("/api/yookassa/webhook")  # в кабинете ЮKassa: Интеграция → HTTP-уведомления
-def hook():
-    pid = ((request.get_json(silent=True) or {}).get("object") or {}).get("id")
-    if pid:
-        try:
-            sync(pid)
-        except Exception:  # noqa: BLE001
-            abort(502)
-    return "", 200
-
-
-@app.get("/api/job/<jid>")
-def job(jid):
-    j = jobs.get(jid)
-    if not j:
-        abort(404)
-    return jsonify({k: v for k, v in j.items() if k != "t"})
-
-
-@app.get("/media/<name>")
-def media(name):
-    return send_from_directory(MEDIA, name, max_age=3600)
-
-
-def cleaner():
-    while True:
-        time.sleep(1800)
-        cutoff = time.time() - 24 * 3600
-        for f in MEDIA.iterdir():
-            if f.stat().st_mtime < cutoff:
-                f.unlink(missing_ok=True)
-        for k in [k for k, v in jobs.items() if v.get("t", 0) < cutoff]:
-            jobs.pop(k, None)
-
-
-@app.get("/health")
-def health():
-    return "ok"
-
-
-# ---------- бот ----------
-def tg(method: str, **payload):
-    r = requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/{method}", json=payload, timeout=40)
-    return r.json()
-
-
-def tg_upload(method: str, field: str, data: bytes, filename: str, **form):
-    r = requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/{method}", data=form,
-                      files={field: (filename, data)}, timeout=180)
-    try:
-        return r.json()
-    except ValueError:
-        return {"ok": False}
-
-
-@app.post("/api/send")
-def send_to_chat():
-    """Кнопка «Сохранить»: бот присылает фото/видео в личный чат."""
-    check_access()
-    u = uid()
-    if not u.startswith("tg:") or not BOT_TOKEN:
-        return jsonify(error="Доступно только внутри Telegram"), 400
-    rate_limit("send:" + u, limit=30)
-    name = Path((request.get_json(silent=True) or {}).get("name", "")).name
-    path = MEDIA / name
-    if not name or not path.is_file():
-        abort(404)
-    video = path.suffix.lower() in (".mp4", ".webm")
-    data = path.read_bytes()
-    r = tg_upload("sendVideo" if video else "sendPhoto", "video" if video else "photo", data, name,
-                  chat_id=u[3:], caption="Velora")
-    if not r.get("ok") and not video:  # слишком большое/необычное фото: шлём файлом
-        r = tg_upload("sendDocument", "document", data, name, chat_id=u[3:], caption="Velora")
-    return (jsonify(ok=True), 200) if r.get("ok") else (jsonify(error="Не удалось отправить."), 502)
-
-
-WH_SECRET = hashlib.sha256(("velora-wh:" + BOT_TOKEN).encode()).hexdigest()[:40]
-USE_WEBHOOK = WEBAPP_URL.startswith("https://") and os.getenv("USE_POLLING") != "1"
-bot_hist: dict = {}
-HELP = ("Я Velora: говорю, придумываю, рисую фото и видео и разбираю снимки.\n\n"
-        "Что можно прямо в чате:\n"
-        "• просто напишите вопрос\n"
-        "• пришлите фото: расскажу, что на нём (подпись к фото = ваш вопрос)\n"
-        "• фото с подписью /edit и описанием: изменю снимок\n"
-        "• /img описание: нарисую фото\n"
-        "• /video описание: сниму короткое видео\n"
-        "• /new: начать разговор заново\n\n"
-        "Кнопка ниже открывает приложение: камера, стили, форматы.")
-
-
-def app_button():
-    return {"inline_keyboard": [[{"text": "Открыть Velora", "web_app": {"url": WEBAPP_URL}}]]}
-
-
-def strip_tags(s: str) -> str:
-    return re.sub(r"\[\[(image|video):[\s\S]*?\]\]", "", s, flags=re.I).strip()
-
-
-def send_media(chat_id, kind: str, prompt: str, opts=None):
-    data, _ = fetch(kind, prompt, opts or {})
-    if kind == "video":
-        tg_upload("sendVideo", "video", data, "velora.mp4", chat_id=chat_id)
-        return
-    r = tg_upload("sendPhoto", "photo", data, "velora.jpg", chat_id=chat_id, caption=prompt[:200])
-    if not r.get("ok"):
-        tg_upload("sendDocument", "document", data, "velora.jpg", chat_id=chat_id, caption=prompt[:200])
-
-
-def handle_update(u: dict):
-    msg = u.get("message") or {}
-    chat = msg.get("chat") or {}
-    chat_id, frm = chat.get("id"), (msg.get("from") or {}).get("id")
-    if not chat_id or not frm or chat.get("type") != "private":
-        return
-    who = f"tg:{frm}"
-    text = (msg.get("text") or msg.get("caption") or "").strip()
-    cmd, _, arg = text.partition(" ")
-    cmd = cmd.split("@")[0].lower() if cmd.startswith("/") else ""
-    arg = arg.strip() if cmd else text
-
-    def say(t, **kw):
-        res = tg("sendMessage", chat_id=chat_id, text=(t or "…")[:4000], **kw)
-        if "web_app" in json.dumps(kw.get("reply_markup") or {}):  # сообщение с кнопкой удаляем через время
-            mid = ((res or {}).get("result") or {}).get("message_id")
-            if mid:
-                open_msgs.setdefault(chat_id, []).append(mid)
-                threading.Timer(APP_MSG_TTL, lambda: tg("deleteMessage", chat_id=chat_id,
-                                                        message_id=mid)).start()
-
-    def need_pay():
-        say("Бесплатные запросы закончились. Они обновятся через 3 часа, а подписка в Velora снимает лимит.",
-            reply_markup=app_button())
-
-    try:
-        for mid in open_msgs.pop(chat_id, []):  # прошлые кнопки открытия убираем сразу
-            try:
-                tg("deleteMessage", chat_id=chat_id, message_id=mid)
-            except Exception:  # noqa: BLE001
-                pass
-        if cmd in ("/start", "/help"):
-            say(HELP, reply_markup=app_button())
-            return
-        if cmd == "/new":
-            bot_hist.pop(chat_id, None)
-            say("Начали заново.")
-            return
-        photos = msg.get("photo")
-        if photos:
-            if cmd == "/edit" and not arg:
-                say("Добавьте описание: что изменить на фото.")
-                return
-            if not spend(who):
-                need_pay()
-                return
-            pick = next((p for p in reversed(photos) if p.get("file_size", 0) <= 3_000_000), photos[0])
-            tg("sendChatAction", chat_id=chat_id, action="upload_photo" if cmd == "/edit" else "typing")
-            path = tg("getFile", file_id=pick["file_id"])["result"]["file_path"]
-            raw = requests.get(f"https://api.telegram.org/file/bot{BOT_TOKEN}/{path}", timeout=60).content
-            if cmd == "/edit":
-                name = f"src_{uuid.uuid4().hex[:12]}.jpg"
-                (MEDIA / name).write_bytes(raw)
-                send_media(chat_id, "edit", arg[:600], {"src": f"{WEBAPP_URL}/media/{name}"})
-                return
-            q = (arg or "Что на фото? Опиши подробно и по делу.")[:2000]
-            durl = "data:image/jpeg;base64," + base64.b64encode(raw).decode()
-            reply = ask_llm([{"role": "user", "content": [{"type": "text", "text": q},
-                                                          {"type": "image_url", "image_url": {"url": durl}}]}])
-            say(strip_tags(reply))
-            return
-        if cmd in ("/img", "/image", "/video"):
-            if len(arg) < 2:
-                say("Добавьте описание, например: /img рассвет над горами")
-                return
-            if not spend(who):
-                need_pay()
-                return
-            kind = "video" if cmd == "/video" else "image"
-            tg("sendChatAction", chat_id=chat_id, action="upload_video" if kind == "video" else "upload_photo")
-            send_media(chat_id, kind, arg[:600])
-            return
-        if cmd == "/edit":
-            say("Пришлите фото и в подписи напишите /edit и что изменить.")
-            return
-        if cmd or not text:
-            if cmd:
-                say(HELP, reply_markup=app_button())
-            return
-        if not spend(who):
-            need_pay()
-            return
-        tg("sendChatAction", chat_id=chat_id, action="typing")
-        h = bot_hist.setdefault(chat_id, [])
-        h.append({"role": "user", "content": text[:2000]})
-        del h[:-10]
-        while h and h[0]["role"] != "user":
-            h.pop(0)
-        try:
-            reply = ask_llm(h)
-        except Exception:
-            h.pop()
-            raise
-        clean = strip_tags(reply)
-        h.append({"role": "assistant", "content": clean[:2000] or "…"})
-        if clean:
-            say(clean)
-        m = re.search(r"\[\[(image|video):\s*([\s\S]+?)\]\]", reply, re.I)
-        if m:
-            send_media(chat_id, m.group(1).lower(), m.group(2).strip()[:600])
-    except Exception as e:  # noqa: BLE001
-        say(f"Не вышло: {str(e)[:160]}")
-
-
-@app.post("/tg/<secret>")
-def tg_hook(secret):
-    if not BOT_TOKEN or not hmac.compare_digest(secret, WH_SECRET):
-        abort(404)
-    if request.headers.get("X-Telegram-Bot-Api-Secret-Token", "") != WH_SECRET:
-        abort(403)
-    upd = request.get_json(silent=True) or {}
-    threading.Thread(target=handle_update, args=(upd,), daemon=True).start()
-    return "", 200
-
-
-def setup_bot():
-    # бот открыт для всех, пароль спрашивает само мини-приложение (/api/unlock)
-    tg("setChatMenuButton", menu_button={"type": "web_app", "text": "Velora",
-                                         "web_app": {"url": WEBAPP_URL}})
-    tg("setMyCommands", commands=[
-        {"command": "img", "description": "Нарисовать фото: /img описание"},
-        {"command": "video", "description": "Снять видео: /video описание"},
-        {"command": "edit", "description": "Изменить фото (подпись к фото)"},
-        {"command": "new", "description": "Начать разговор заново"},
-        {"command": "help", "description": "Что я умею"}])
-    if USE_WEBHOOK:
-        res = tg("setWebhook", url=f"{WEBAPP_URL}/tg/{WH_SECRET}", secret_token=WH_SECRET,
-                 allowed_updates=["message"])
-        print("Вебхук:", "установлен" if res.get("ok") else res)
-        return
-    tg("deleteWebhook")
-    offset = 0
-    while True:
-        try:
-            res = tg("getUpdates", offset=offset, timeout=30, allowed_updates=["message"])
-            for upd in res.get("result", []):
-                offset = upd["update_id"] + 1
-                threading.Thread(target=handle_update, args=(upd,), daemon=True).start()
-        except Exception:  # noqa: BLE001
-            time.sleep(5)
-
-
-# Фоновые потоки стартуют при импорте, чтобы работало и под gunicorn
-threading.Thread(target=cleaner, daemon=True).start()
-if BOT_TOKEN and WEBAPP_URL and not MOCK:
-    threading.Thread(target=setup_bot, daemon=True).start()
-    print("Бот запущен (" + ("вебхук" if USE_WEBHOOK else "polling") + ")")
-elif not MOCK:
-    print("BOT_TOKEN или WEBAPP_URL не заданы — бот не запущен, работает только сайт")
+            try: tg("setWebhook", url=PUBLIC_URL + "/tg/webhook", secret_token=SECRET, allowed_updates=["pre_checkout_query", "message"]); print("webhook установлен")
+            except Exception as e: print("setWebhook:", e)
+    else: print("ВНИМАНИЕ: BOT_TOKEN не задан — вход через Telegram и Stars не будут работать")
+    print("нейросеть:", LLM_BASE, LLM_MODEL, "| ЮKassa:", "ключ задан" if YK_SECRET else "НЕТ YOOKASSA_SECRET")
+    if E("RENDER") and not os.path.abspath(DB_PATH).startswith("/var/data"):
+        print("!!! ВНИМАНИЕ: на Render файловая система стирается при каждом деплое и перезапуске. Подписки в", DB_PATH,
+              "пропадут. Подключите Disk (Mount Path /var/data) и задайте DB_PATH=/var/data/velora.db и MEDIA_DIR=/var/data/media", file=sys.stderr)
+    port = int(E("PORT", "8080")); print("Velora слушает порт", port)
+    ThreadingHTTPServer(("0.0.0.0", port), H).serve_forever()
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "8080")), threaded=True)
+    main()
