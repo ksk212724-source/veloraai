@@ -776,7 +776,7 @@ async function talk(photo){busy(true);const th=thinking();
   try{
     const msgs=chat().msgs.filter(m=>m.content).slice(-20).map((m,i,a)=>({role:m.role,content:window.apiText?apiText(m,i>=a.length-4?14000:1500):m.content}));
     const res=await post('/api/chat',{messages:msgs,image:photo||null,profile:profileText()});let reply='',ticket='';
-    if(!res){await new Promise(s=>setTimeout(s,900));reply=window.demoReply?demoReply():DEMO[demoI++%DEMO.length]}
+    if(!res){reply=(!photo&&window.onlineChat)?(await onlineChat(msgs)||''):'';if(!reply){const lt=(msgs[msgs.length-1]||{}).content||'';if(window.needsAI&&needsAI(lt))throw new Error('Не получилось связаться с нейросетью. Проверьте интернет и нажмите ↻ под сообщением');await new Promise(s=>setTimeout(s,900));reply=window.demoReply?demoReply():DEMO[demoI++%DEMO.length]}}
     else{const{r,j}=res;if(r.status===403)throw new Error('Откройте приложение через бота в Telegram');if(r.status===402){th.remove();openSheet();return}if(r.status===429)throw new Error('Слишком много сообщений, подождите немного');if(!r.ok)throw new Error(j.error||'Не получилось ответить');reply=j.reply||'';ticket=j.ticket||''}
     th.remove();const m=reply.match(/\[\[(image|video):\s*([\s\S]+?)\]\]/i);reply=reply.replace(/\[\[(image|video):[\s\S]*?\]\]/ig,'').trim();
     if(reply){push({role:'assistant',content:reply});show(textEl('assistant',reply));snd('recv');if(vm.on){vm.spoke=true;vmState('speak');speakText(reply,vmNext)}else if(P.autospeak)speakText(reply)}
@@ -811,7 +811,7 @@ async function generate(kind,prompt,viaChat,ticket,photo){
   try{
     const res=await post('/api/generate',{kind,prompt,ticket,image:photo||null,aspect:S.aspect[kind],duration:String(S.dur),style:kind==='video'?'none':S.style,seed:Math.floor(Math.random()*1e6)});
     if(!res){ /* без сервера: фото напрямую из бесплатного сервиса */
-      if(kind==='video'){lab.textContent='Собираю видео кодом…';const vu=await codeVideo(prompt,S.dur,S.aspect.video);done({kind:'video',url:vu,prompt});return}
+      if(kind==='video'){d.remove();await window.aiVideo16(prompt);return}
       if(kind!=='image')throw new Error('Правка фото работает после подключения сервера');
       const [w,h]=SIZES[S.aspect.image]||[768,1024];
       const url=`https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${w}&height=${h}&nologo=true&seed=${Math.floor(Math.random()*1e6)}`;
@@ -2847,6 +2847,7 @@ var _sh=shrink;shrink=function(s,max,q){if(max<2000)return _sh(s,max,q);return n
 
 var _hd3=htmlDoc;htmlDoc=function(c){var d=_hd3(c),S3='<style>*,*::before,*::after{box-sizing:border-box}html,body{max-width:100%;overflow-x:hidden}canvas{max-width:100%}</style>';return /<\/head>/i.test(d)?d.replace(/<\/head>/i,S3+'</head>'):S3+d};
 var PING15='<script>parent.postMessage({vping:1},"*")<\/script>',_hd4=htmlDoc;htmlDoc=function(c){var d=_hd4(c),o=(c.match(/<script/gi)||[]).length,k=(c.match(/<\/script>/gi)||[]).length;if(o>k)d+='<\/script>';return /<head[^>]*>/i.test(d)?d.replace(/<head[^>]*>/i,function(m){return m+PING15}):d+PING15};
+window.__htmlDoc=function(c){return htmlDoc(c)};
 var _bc3=buildCode;buildCode=function(){var b=_bc3.apply(this,arguments),seen={};[].forEach.call(b.querySelectorAll('.cba button'),function(x){var k=x.getAttribute('aria-label')||x.title;if(seen[k])x.remove();else seen[k]=1});return b};
 
 /* голос: микрофон перепроверяется перед каждым прослушиванием */
@@ -3256,7 +3257,7 @@ document.addEventListener('pointerdown',function(e){var b=e.target.closest&&e.ta
 var _te=textEl;textEl=function(role,text,still,img){var d=_te.apply(this,arguments);try{d.__raw=text}catch(e){}return d};
 function cut16(raw){if(!raw)return false;if((raw.match(/```/g)||[]).length%2===1)return true;var m=raw.match(/```html[\s\S]*?```/i);if(!m)return false;return(m[0].match(/<script/gi)||[]).length>(m[0].match(/<\/script>/gi)||[]).length}
 var rt16=0;
-function retry16(el){if(rt16>=1||!el||!el.__raw||!cut16(el.__raw))return false;rt16++;var n=0,iv=setInterval(function(){n++;if(!S.busy||n>40){clearInterval(iv);if(!S.busy){try{el.remove()}catch(e){}submit('Код оборвался. Напиши заново: один HTML-файл, максимально компактный (до 120 строк), без комментариев и пояснений, все теги закрыты.')}}},300);return true}
+function retry16(el){if(1||rt16>=1||!el||!el.__raw||!cut16(el.__raw))return false;rt16++;var n=0,iv=setInterval(function(){n++;if(!S.busy||n>40){clearInterval(iv);if(!S.busy){try{el.remove()}catch(e){}submit('Код оборвался. Напиши заново: один HTML-файл, максимально компактный (до 120 строк), без комментариев и пояснений, все теги закрыты.')}}},300);return true}
 async function aiVideo16(prompt){busy(true);var d=document.createElement('div');d.className='msg ai';d.innerHTML='<div class="shot wait" style="--w:230px"><div class="frame"><div class="pending" style="--ar:9/16"><i class="pring"></i><span>Рисую анимацию кодом…</span></div></div></div>';show(d);
  try{var ask='Сделай короткое видео (анимация 8 секунд, вертикальное 9:16) на тему: «'+prompt+'». Напиши ОДИН полный самодостаточный HTML-файл: canvas 540x960 на весь экран, requestAnimationFrame, без внешних библиотек и картинок. Красиво: градиенты, частицы, плавное движение, смена сцен, в конце название. Ответь только блоком ```html без пояснений.';
   var res=await post('/api/chat',{messages:[{role:'user',content:ask}],image:null,profile:''});
@@ -3310,14 +3311,15 @@ var COL=['#8fe3b0','#ff8fa6','#ffd27c','#7cc4ff','#c7a6ff','#ffffff'],hue=0;
 
 /* ---------- звук: свой синтез поверх общего звукового контекста приложения ---------- */
 function A(){try{return soundOn&&ctx()?ctx():null}catch(e){return null}}
-function tone(f0,f1,t,len,type,vol){var a=A();if(!a)return;var s=a.currentTime+t,o=a.createOscillator(),g=a.createGain();o.type=type||'sine';
+var VK=.45;/* общая тихая громкость эффектов маскота */
+function tone(f0,f1,t,len,type,vol){var a=A();if(!a)return;vol=(vol||.2)*VK;var s=a.currentTime+t,o=a.createOscillator(),g=a.createGain();o.type=type||'sine';
  o.frequency.setValueAtTime(f0,s);if(f1&&f1!==f0)o.frequency.exponentialRampToValueAtTime(f1,s+len*.9);
- g.gain.setValueAtTime(0,s);g.gain.linearRampToValueAtTime(vol||.2,s+.012);g.gain.exponentialRampToValueAtTime(.0001,s+len);
+ g.gain.setValueAtTime(0,s);g.gain.linearRampToValueAtTime(vol,s+.012);g.gain.exponentialRampToValueAtTime(.0001,s+len);
  o.connect(g);g.connect(mix);o.start(s);o.stop(s+len+.05)}
 function noise(t,len,f0,f1,vol){var a=A();if(!a)return;var n=Math.floor(a.sampleRate*len),b=a.createBuffer(1,n,a.sampleRate),d=b.getChannelData(0);
  for(var i=0;i<n;i++)d[i]=(Math.random()*2-1)*(1-i/n);var s=a.currentTime+t,src=a.createBufferSource(),fl=a.createBiquadFilter(),g=a.createGain();
  src.buffer=b;fl.type='bandpass';fl.Q.value=1.2;fl.frequency.setValueAtTime(f0,s);fl.frequency.exponentialRampToValueAtTime(f1,s+len);
- g.gain.setValueAtTime(vol||.2,s);g.gain.exponentialRampToValueAtTime(.0001,s+len);src.connect(fl);fl.connect(g);g.connect(mix);src.start(s)}
+ g.gain.setValueAtTime((vol||.2)*VK,s);g.gain.exponentialRampToValueAtTime(.0001,s+len);src.connect(fl);fl.connect(g);g.connect(mix);src.start(s)}
 var SF={
  arrive:function(){[523,659,784,1047,1319].forEach(function(f,i){tone(f,f*1.01,i*.07,.35,'triangle',.16)});noise(0,.28,500,3200,.12)},
  reply:function(){tone(880,880,0,.22,'sine',.18);tone(1175,1175,.09,.26,'sine',.16);tone(1568,1568,.18,.4,'sine',.13)},
@@ -3403,17 +3405,18 @@ var ON={
  rock:function(){burst(8,{cols:['#ff8fa6','#ffd27c']});sfx('beat')},
  bonk:function(){sfx('thud');burst(12,{cols:COL})}};
 var prev=null,cur=null,tmr=null;
-try{Object.defineProperty(rm,'_ext',{configurable:true,get:function(){return cur},set:function(v){cur=v;if(v&&v!==prev&&!rm.classList.contains('gone')){var f=ON[v];if(f)try{f()}catch(e){}}prev=v}})}catch(e){}
+var UST={held:1,speak:1,think:1,happy:1,surprised:1,jelly:1,spin:1};
+try{Object.defineProperty(rm,'_ext',{configurable:true,get:function(){return cur},set:function(v){cur=v;if(v&&!busy&&!UST[v]&&performance.now()-lastIn>1500&&afk())nextOk=performance.now()+rnd(9000,15000);if(v&&v!==prev&&!rm.classList.contains('gone')){var f=ON[v];if(f)try{f()}catch(e){}}prev=v}})}catch(e){}
 /* постоянные эмиттеры, пока состояние длится */
 var lastP={x:0,y:0,t:performance.now()},tk=0;
 setInterval(function(){if(document.hidden||rm.classList.contains('gone'))return;tk++;var s=cur,r=X.get(),n=performance.now(),sp=Math.hypot(r.x-lastP.x,r.y-lastP.y)/Math.max(.05,(n-lastP.t)/1000);lastP={x:r.x,y:r.y,t:n};
  rm.classList.toggle('glow',!!s&&s!=='sleep'||sp>200);rm.classList.toggle('edge',r.x<70);
  if(sp>220)trail();
- if(s==='dance'||s==='wiggle'||s==='sing'||s==='rock'){if(tk%3===0){emo(pick(['🎵','🎶','✨']),1,{h:70});sfx(s==='sing'?'note':'beat')}}
+ if(s==='dance'||s==='wiggle'||s==='sing'||s==='rock'){if(tk%3===0){emo(pick(['🎵','🎶','✨']),1,{h:70});if(s==='sing'&&tk%6===0)sfx('note')}}
  else if(s==='love'&&tk%4===0)emo(pick(['💚','💗']),1,{h:80});
- else if(s==='sleep'&&tk%9===0){emo('💤',1,{h:70});sfx('snore')}
+ else if(s==='sleep'&&tk%9===0){emo('💤',1,{h:70})}
  else if(s==='run'||s==='walk'){if(tk%2===0)dust(2)}
- else if(s==='happy'||s==='cheer'||s==='jump'){if(tk%3===0){burst(3,{kinds:['s'],max:70});sfx('spark')}}
+ else if(s==='happy'||s==='cheer'||s==='jump'){if(tk%3===0){burst(3,{kinds:['s'],max:70})}}
  else if(s==='held'&&tk%2===0)trail()},120);
 
 /* ---------- сам по себе: придумывает номера, бегает, танцует ---------- */
@@ -3432,16 +3435,20 @@ function homeAfter(f){return async function(){var h=X.get().x;await f();var b=bo
 var ACTS={showTime:showTime,sprint:sprint,hopHop:hopHop,chase:chase,firework:firework,nap:nap,romance:romance};Object.keys(ACTS).forEach(function(k){ACTS[k]=homeAfter(ACTS[k])});
 window.rmActs=ACTS;ACTS=Object.keys(ACTS).map(function(k){return ACTS[k]}).concat([ACTS.showTime,ACTS.firework]);var busy=false;
 document.addEventListener('pointerdown',function(e){window.__lastTap={x:e.clientX,y:e.clientY}},true);
-(async function life2(){await sleepMs(6000);for(;;){await sleepMs(rnd(7000,13000));
- if(busy||document.hidden||rm.classList.contains('gone')||document.documentElement.classList.contains('calm')||document.querySelector('.plans.on,#pa16.on,#pv16')||(typeof S!=='undefined'&&S.busy))continue;
- busy=true;try{await pick(ACTS)()}catch(e){}busy=false}})();
-
+/* ---------- анимации только в простое: 5 секунд без касаний ---------- */
+var lastIn=performance.now(),nextOk=0;
+['pointerdown','pointermove','keydown','touchstart','touchmove','wheel','input'].forEach(function(n){addEventListener(n,function(){lastIn=performance.now()},{passive:true,capture:true})});
+function afk(){return performance.now()-lastIn>=5000&&!(typeof S!=='undefined'&&S.busy)}
+setInterval(function(){if(busy)return;if(!afk()||performance.now()<nextOk)X.hold(700)},300);
+(async function life2(){for(;;){await sleepMs(1000);
+ if(busy||!afk()||performance.now()<nextOk||document.hidden||rm.classList.contains('gone')||document.documentElement.classList.contains('calm')||document.querySelector('.plans.on,#pa16.on,#pv16'))continue;
+ busy=true;nextOk=performance.now()+rnd(20000,30000);try{await pick(ACTS)()}catch(e){}busy=false;nextOk=performance.now()+rnd(12000,20000)}})();
 /* ---------- события приложения ---------- */
 window.rmFX={arrive:function(){burst(18,{cols:COL,max:130});ring('#8fe3b0',3.4);ring('#ffffff',2.4);sfx('arrive')},burst:burst,sfx:sfx,ring:function(){ring('#8fe3b0',2.6)}};
 var _show=window.show||show;
 show=function(el){var r=_show.apply(this,arguments);try{if(el&&el.classList&&el.classList.contains('ai')&&!el.classList.contains('still')&&!rm.classList.contains('gone')){burst(8,{kinds:['s'],cols:['#8fe3b0','#fff','#7cc4ff'],max:80});sfx('reply')}}catch(e){}return r};
 var _sub=submit;submit=function(){try{if(!rm.classList.contains('gone'))sfx('whoosh')}catch(e){}return _sub.apply(this,arguments)};
-var inp=document.getElementById('inp'),kc=0;if(inp)inp.addEventListener('input',function(){if(rm.classList.contains('gone'))return;if(++kc%4===0){burst(2,{kinds:['s'],max:50});sfx('spark')}});
+var inp=document.getElementById('inp'),kc=0;if(inp)inp.addEventListener('input',function(){if(rm.classList.contains('gone'))return;if(++kc%4===0){burst(2,{kinds:['s'],max:50})}});
 })();
 </script>
 <!-- ===== VELORA v0.17 · шаг 3: маскот «говорит» ответ — частицы летят в чат и проявляют слова ===== -->
@@ -3552,5 +3559,64 @@ var _s=show;show=function(el){var sync=null;
 .pa-b{background:#fff!important;color:#0b0b0d!important}
 #pa16.wait .pa-b{background:rgba(255,255,255,.1)!important;color:#fff!important;border:1px solid rgba(255,255,255,.18)}
 </style>
+<!-- ===== VELORA v0.17 · шаг 5: игры и видео создаёт нейросеть онлайн, код проверяется и чинится сам ===== -->
+<script>
+(function(){
+/* ---------- нейросеть онлайн: свой сервер, а если его нет или он молчит — открытый сервис ---------- */
+function needsAI(t){return /игр|game|видео|анимаци|video|animation|canvas|html|сайт|страниц|скрипт|код\b/i.test(String(t||''))}
+async function onlineChat(msgs,o){o=o||{};var prof='';try{prof=profileText()}catch(e){}
+ if(!S.demo){try{var r=await post('/api/chat',{messages:msgs,image:null,profile:prof});if(r&&r.r.ok&&r.j&&r.j.reply)return r.j.reply}catch(e){}}
+ var key='';try{key=localStorage.getItem('velora_key')||''}catch(e){}
+ var models=['openai','mistral'];
+ for(var i=0;i<models.length;i++){var ctl=new AbortController(),tm=setTimeout(function(){ctl.abort()},110000);
+  try{var rr=await fetch('https://text.pollinations.ai/openai',{method:'POST',signal:ctl.signal,headers:Object.assign({'Content-Type':'application/json'},key?{Authorization:'Bearer '+key}:{}),
+    body:JSON.stringify({model:models[i],messages:[{role:'system',content:prof}].concat(msgs),temperature:.7,max_tokens:12000,private:true,seed:Math.floor(Math.random()*1e6)})});
+   if(!rr.ok)continue;var j=await rr.json(),t=j&&j.choices&&j.choices[0]&&j.choices[0].message&&j.choices[0].message.content;if(t&&t.length>20)return t}catch(e){}finally{clearTimeout(tm)}}
+ return ''}
+window.onlineChat=onlineChat;window.needsAI=needsAI;
+/* ---------- проверка кода: синтаксис + запуск в скрытой песочнице + «нажатие» старта ---------- */
+function getHtml(raw){raw=String(raw||'');var m=raw.match(/```html[^\n]*\n([\s\S]*?)(```|$)/i);if(m&&m[1].trim())return m[1];if(/<!doctype html|<html[\s>]/i.test(raw))return raw;return''}
+function cutCode(raw){raw=String(raw||'');if((raw.match(/```/g)||[]).length%2===1)return true;var c=getHtml(raw);return(c.match(/<script/gi)||[]).length>(c.match(/<\/script>/gi)||[]).length}
+function probe(code){return new Promise(function(res){
+ var re=/<script(?![^>]*\bsrc\s*=)([^>]*)>([\s\S]*?)<\/script>/gi,m;
+ while((m=re.exec(code))){if(/type\s*=\s*["']?module/i.test(m[1]))continue;try{new Function(m[2])}catch(e){return res('синтаксическая ошибка: '+e.message)}}
+ var f=document.createElement('iframe');f.setAttribute('sandbox','allow-scripts');f.style.cssText='position:fixed;left:-9999px;top:0;width:390px;height:700px;border:0;opacity:0;pointer-events:none';
+ var done=false,t,fin=function(r){if(done)return;done=true;removeEventListener('message',h);clearTimeout(t);try{f.remove()}catch(e){}res(r||'')},
+  h=function(e){if(e.source===f.contentWindow&&e.data&&e.data.verr)fin('ошибка при запуске: '+String(e.data.verr).slice(0,160))};
+ addEventListener('message',h);
+ var kick='<script>setTimeout(function(){try{var T=[document.body,document.querySelector("canvas"),document];["pointerdown","mousedown","touchstart","click","keydown"].forEach(function(n){T.forEach(function(x){if(!x)return;try{x.dispatchEvent(n==="keydown"?new KeyboardEvent(n,{key:" ",code:"Space",keyCode:32,bubbles:true}):new Event(n,{bubbles:true}))}catch(e){}})})}catch(e){}},700)<\/script>';
+ f.srcdoc=(window.__htmlDoc?window.__htmlDoc(code):code)+kick;document.body.appendChild(f);t=setTimeout(function(){fin('')},3000)})}
+window.probeCode=probe;
+/* ---------- самолечение ответа с игрой/анимацией ---------- */
+var healing=0,FIXQ='Код не работает: %e. Исправь и пришли ПОЛНЫЙ рабочий код заново одним блоком ```html, без пояснений. Все теги и script закрыты, все переменные объявлены, ничего внешнего. Проверь код на ошибки перед ответом.';
+async function healMsg(el){var raw=el.__raw||'',code=getHtml(raw);if(!code||healing)return;healing++;
+ try{var err=cutCode(raw)?'ответ оборвался, не закрыты теги или script':await probe(code),cur=raw,tries=0;
+  while(err&&tries<2){tries++;try{toast(tries===1?'Нашёл ошибку в коде, исправляю…':'Проверяю исправление…')}catch(e){}
+   var h=chat().msgs.filter(function(m){return m.content&&m.role}).slice(-8).map(function(m){return{role:m.role,content:String(m.content).slice(0,7000)}});
+   h.push({role:'user',content:FIXQ.replace('%e',err)});
+   var nr=await onlineChat(h);if(!nr)break;var nc=getHtml(nr);if(!nc)break;cur=nr;err=cutCode(nr)?'ответ снова оборвался':await probe(nc)}
+  if(cur!==raw){var ms=chat().msgs,i=ms.map(function(m){return m.content}).lastIndexOf(raw);if(i>-1){ms[i].content=cur;try{persist()}catch(e){}}
+   var nm=textEl('assistant',cur);if(el.isConnected)el.replaceWith(nm);else show(nm);try{notify('success')}catch(e){}}
+  if(err)try{toast('Не вышло исправить само. Нажмите ↻ под сообщением')}catch(e){}
+ }catch(e){}finally{healing--}}
+window.healMsg=healMsg;
+var _s5=show;show=function(el){var h=false;try{h=!!(el&&el.classList&&el.classList.contains('ai')&&!el.classList.contains('still')&&S.busy&&!vm.on&&el.__raw&&/```html|<canvas|<!doctype html/i.test(el.__raw))}catch(e){}
+ var r=_s5.apply(this,arguments);if(h)setTimeout(function(){healMsg(el)},600);return r};
+/* ---------- видео: нейросеть пишет анимацию, мы её проверяем и чиним (до 3 попыток) ---------- */
+window.aiVideo16=async function(prompt){busy(true);var d=document.createElement('div');d.className='msg ai';
+ d.innerHTML='<div class="shot wait" style="--w:230px"><div class="frame"><div class="pending" style="--ar:9/16"><i class="pring"></i><span>Пишу сценарий…</span></div></div></div>';show(d);var lab=d.querySelector('.pending span');
+ try{var ask='Сделай короткое видео (анимация 8 секунд, вертикальное 9:16) на тему: «'+prompt+'». Напиши ОДИН полный самодостаточный HTML-файл: один <canvas width=540 height=960>, requestAnimationFrame по времени, без внешних библиотек и картинок. Красиво: градиенты, частицы, плавное движение, 3–4 смены сцен, название в конце, текст рисуй на canvas с обводкой. Ответь только блоком ```html без пояснений.',
+   rep='',code='',err='нет ответа от нейросети';
+  for(var a=0;a<3;a++){var msgs=[{role:'user',content:ask}];if(a>0&&rep){msgs.push({role:'assistant',content:rep},{role:'user',content:FIXQ.replace('%e',err)})}
+   if(lab)lab.textContent=a?'Исправляю код…':'Пишу сценарий…';rep=await onlineChat(msgs);if(!rep){err='нет ответа от нейросети';continue}
+   code=getHtml(rep);if(!code||!/<canvas/i.test(code)){err='в коде нет <canvas>';continue}if(cutCode(rep)){err='ответ оборвался';continue}
+   if(lab)lab.textContent='Проверяю кадры…';err=await probe(code);if(!err)break}
+  if(err)throw new Error('Не получилось собрать видео ('+err+'). Нажмите «Создать видео» ещё раз.');
+  rep='Видео собрано. Нажмите «Запустить», запись пойдёт сама.\n\n```html\n'+code.trim()+'\n```';
+  d.remove();var m=textEl('assistant',rep);push({role:'assistant',content:rep,t:Date.now()});show(m);scrollDown();
+  setTimeout(function(){var h=m.querySelector('.hv16');if(h){h.click();setTimeout(function(){var r=document.querySelector('#pv16 .pvr');r&&r.click()},1500)}},700)}
+ catch(e){d.remove();show(textEl('assistant',e.message||'Не вышло'));try{notify('error')}catch(x){}}finally{busy(false)}};
+})();
+</script>
 </body>
 </html>
