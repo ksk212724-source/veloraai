@@ -841,7 +841,7 @@ function renderQ(){tick();const f=$('#foot');if(Q.beta){f.textContent='Бета-
   $('#planS').textContent=Q.active?'Активна до '+new Date(Q.until*1000).toLocaleDateString('ru-RU',{day:'numeric',month:'long'}):`Использовано ${Math.min(Q.used,Q.total)} из ${Q.total}`+' · пауза 3 часа после лимита';
   $('#planB').textContent=Q.active?'Продлить на месяц':`Подписка ${Q.price} ₽ в месяц`}
 async function refreshMe(){try{const r=await fetch(API_BASE+'/api/me',{headers:headers()});if(r.status===401){showLock();return}if(!r.ok)throw 0;$('#lock').hidden=true;const j=await r.json();
-  S.demo=false;Q.total=j.free_total;Q.used=j.used;Q.reset=j.reset||0;Q.active=j.active;Q.until=j.sub_until;Q.price=j.price;Q.beta=!!j.beta}catch(e){S.demo=true;Q.active=false;Q.beta=true}renderQ()}
+  S.demo=false;Q.total=j.free_total;Q.used=j.used;Q.reset=j.reset||0;Q.active=j.active;Q.until=j.sub_until;Q.price=j.price;Q.beta=!!j.beta;if(j.prices)window.SRV_PRICES=j.prices;window.SRV_ME=j}catch(e){S.demo=true;Q.active=false;Q.beta=true}renderQ()}
 function toast(t){const d=document.createElement('div');d.className='toast gl';d.textContent=t;document.body.appendChild(d);setTimeout(()=>d.classList.add('out'),2600);setTimeout(()=>d.remove(),3100)}
 const sheet=$('#sheet');
 function openSheet(){closeDrawer();sheet.classList.add('on');$('#scrim').classList.add('on');haptic('medium');$('#shS').textContent=left()?'Подписка снимает все ограничения':`Лимит обновится в ${at()}, или подключите безлимит`}
@@ -3142,11 +3142,13 @@ var M16=localStorage.getItem('velora_pm')||'rub',PR={plus:1,pro:1,ultra:1,pro_tr
 PF={plus:['600K токенов в день','Перерыв 2 часа','Фото без лимита','Голос и проекты'],pro:['1,5M токенов в день','Перерыв 1 час','Видео из кода','Глубокое исследование'],ultra:['3M токенов в день','Перерыв 30 минут','Всё без ограничений','Ранний доступ к новому']};PF.pro_trial=PF.pro;
 var DP={};try{DP=JSON.parse(localStorage.getItem('velora_dp')||'{}')}catch(e){}
 window.tierHook&&tierHook(function(){return DP.until>Date.now()?DP.t:''});
-var _rm=refreshMe;refreshMe=async function(){await _rm.apply(this,arguments);if(DP.until>Date.now()){Q.active=true;Q.until=Math.floor(DP.until/1000)}try{renderQ()}catch(e){}};
+var _rm=refreshMe;refreshMe=async function(){await _rm.apply(this,arguments);try{paint()}catch(e){}
+ var sm=window.SRV_ME;if(sm&&sm.paid&&{plus:1,pro:1,ultra:1}[sm.plan]){var su=sm.sub_until*1000;if(DP.t!==sm.plan||Math.abs((DP.until||0)-su)>1000){DP={t:sm.plan,until:su};try{localStorage.setItem('velora_dp',JSON.stringify(DP))}catch(e){}}}if(DP.until>Date.now()){Q.active=true;Q.until=Math.floor(DP.until/1000)}try{renderQ()}catch(e){}};
 var cur=function(p){return M16==='stars'?'⭐':'₽'};
+function pr16(p){var s=window.SRV_PRICES&&window.SRV_PRICES[p];return s?(M16==='stars'?s.stars:s.rub):PR[p]}
 function paint(){var pl=$('#plans');if(!pl)return;[].forEach.call(pl.querySelectorAll('.sg16 button'),function(b){b.classList.toggle('on',b.dataset.m===M16)});
- [].forEach.call(pl.querySelectorAll('.plp b'),function(b){if(!b.dataset.o)b.dataset.o=b.textContent;b.textContent=M16==='stars'?b.dataset.o.replace('₽','⭐'):b.dataset.o});
- [].forEach.call(pl.querySelectorAll('.plcta.go'),function(b){var p=b.dataset.p;if(!PR[p]){b.textContent='Бесплатный тариф';b.style.opacity='.45';b.style.pointerEvents='none';return}b.style.opacity='';b.style.pointerEvents='';b.textContent='Купить '+(NM[p]||p)+' · '+PR[p]+' '+cur()});var t=$('#trp16');if(t)t.textContent=PR.pro_trial+' '+cur()}
+ [].forEach.call(pl.querySelectorAll('.plp b'),function(b){if(!b.dataset.o)b.dataset.o=b.textContent;var cd=b.closest('.plc'),id=cd&&['plus','pro','ultra'].filter(function(x){return cd.classList.contains(x)})[0];b.textContent=(id&&window.SRV_PRICES&&window.SRV_PRICES[id])?pr16(id)+' '+cur():(M16==='stars'?b.dataset.o.replace('₽','⭐'):b.dataset.o)});
+ [].forEach.call(pl.querySelectorAll('.plcta.go'),function(b){var p=b.dataset.p;if(!PR[p]){b.textContent='Бесплатный тариф';b.style.opacity='.45';b.style.pointerEvents='none';return}b.style.opacity='';b.style.pointerEvents='';b.textContent='Купить '+(NM[p]||p)+' · '+pr16(p)+' '+cur()});var t=$('#trp16');if(t)t.textContent=pr16('pro_trial')+' '+cur()}
 var plH=document.querySelector('#plans .plH');
 if(plH){var bx=document.createElement('div');bx.className='pm16';bx.innerHTML='<div class="sg16"><button type="button" data-m="rub">₽ ЮKassa</button><button type="button" data-m="stars">⭐ Telegram Stars</button></div><button type="button" class="tr16"><span><b>Pro на 3 дня</b><small>Все возможности Pro, чтобы попробовать</small></span><em id="trp16">1 ₽</em></button>';plH.appendChild(bx);
  bx.querySelector('.sg16').onclick=function(e){var b=e.target.closest('button');if(!b)return;M16=b.dataset.m;try{localStorage.setItem('velora_pm',M16)}catch(x){}hz('light');paint()};
@@ -3593,7 +3595,7 @@ window.probeCode=probe;
 var healing=0,FIXQ='Код не работает: %e. Исправь и пришли ПОЛНЫЙ рабочий код заново одним блоком ```html, без пояснений. Все теги и script закрыты, все переменные объявлены, никаких внешних библиотек, CDN и <script src>. Проверь код на ошибки перед ответом.';
 async function healMsg(el){var raw=el.__raw||'',code=getHtml(raw);if(!code||healing)return;healing++;
  try{var err=cutCode(raw)?'ответ оборвался, не закрыты теги или script':await probe(code),cur=raw,tries=0;
-  while(err&&tries<2){tries++;try{toast(tries===1?'Нашёл ошибку в коде, исправляю…':'Проверяю исправление…')}catch(e){}
+  while(err&&tries<1){tries++;try{toast(tries===1?'Нашёл ошибку в коде, исправляю…':'Проверяю исправление…')}catch(e){}
    var h=chat().msgs.filter(function(m){return m.content&&m.role}).slice(-8).map(function(m){return{role:m.role,content:String(m.content).slice(0,7000)}});
    h.push({role:'user',content:FIXQ.replace('%e',err)});
    var nr=await onlineChat(h);if(!nr)break;var nc=getHtml(nr);if(!nc)break;cur=nr;err=cutCode(nr)?'ответ снова оборвался':await probe(nc)}
@@ -3616,10 +3618,23 @@ window.veloraDiag=diag;
 (function(){var sc=document.getElementById('setc');if(!sc)return;var r=document.createElement('div');r.className='setrow16';r.innerHTML='<b>Связь и ошибки</b><button type="button" class="vt16">Проверить связь</button>';r.querySelector('button').onclick=diag;sc.appendChild(r)})();
 var _s5=show;show=function(el){var h=false;try{h=!!(el&&el.classList&&el.classList.contains('ai')&&!el.classList.contains('still')&&S.busy&&!vm.on&&el.__raw&&/```html|<canvas|<!doctype html/i.test(el.__raw))}catch(e){}
  var r=_s5.apply(this,arguments);if(h)setTimeout(function(){healMsg(el)},600);return r};
+
+/* ---------- память Velora: как делать видео и какого качества ---------- */
+window.VIDEO_RULES=["КАЧЕСТВО ВИДЕО (обязательно, как у короткого ролика для Reels/TikTok, не как заставка).",
+"1) РЕЖИССУРА: сначала придумай мини-сюжет: завязка, развитие, кульминация, финал. Минимум 4 сцены по 2–3 с, между сценами плавные переходы (кроссфейд, проезд камеры, вспышка, масштабирование, шторка). Никаких статичных кадров дольше 1 с: что-то всегда движется.",
+"2) КАМЕРА: имитируй камеру: медленный зум (scale 1→1.15), параллакс в 3–4 слоя (дальний фон двигается медленнее, передний быстрее), лёгкое покачивание. Всё через ctx.save/translate/scale/restore от времени t.",
+"3) ВИЗУАЛ: продуманная палитра из 3–4 цветов (тёмный фон + яркий акцент), градиенты в фоне, свечение (globalCompositeOperation=\"lighter\" и радиальные градиенты вместо shadowBlur), виньетка по краям, лёгкое зерно или мягкие блики. Рисуй осмысленные объекты по теме (силуэты, горы, город, звёзды, волны, машины, персонажи из простых фигур), а не просто случайные круги.",
+"4) ДВИЖЕНИЕ: все анимации через easing (easeInOutCubic, easeOutBack, easeOutExpo), никакой линейной скуки. Частицы 80–250 штук (больше телефон не потянет), с разной скоростью, размером, прозрачностью и следом (шлейф через полупрозрачную заливку фона).",
+"5) ТЕКСТ: 2–4 коротких надписи по сюжету (не больше 4 слов), крупный жирный шрифт, обводка и тень, появляются с анимацией (въезд, рост, по буквам), по одной за раз, по центру или в нижней трети, без наложений. В финале красивый заголовок по теме.",
+"6) РИТМ: ритм нарастает к кульминации (быстрее смены, ярче вспышки), финал спокойнее. Вся длительность 8–10 с, ролик зациклен: последний кадр плавно переходит в первый.",
+"7) ТЕХНИКА: один <canvas width=540 height=960>, время считай по performance.now() (не по счётчику кадров), без внешних файлов, библиотек, localStorage и alert. Заранее создавай градиенты и массивы частиц, внутри кадра не создавай тяжёлых объектов. Код до 230 строк, все теги и script закрыты.",
+"8) САМОПРОВЕРКА: перед ответом убедись, что все переменные объявлены и скобки закрыты, а ролик не скучный: есть сюжет, движение камеры, свет и текст."].join(" ");
+window.VIDEO_BRIEF=function(topic){return "Сделай короткое вертикальное видео 9:16 (8–10 секунд) на тему: «"+topic+"». Напиши ОДИН полный самодостаточный HTML-файл. "+window.VIDEO_RULES+" Ответь только блоком ```html без пояснений."};
+window.RICH_HINT=(window.RICH_HINT||'')+' ВИДЕО (всегда следуй этому): '+window.VIDEO_RULES+' ';
 /* ---------- видео: нейросеть пишет анимацию, мы её проверяем и чиним (до 3 попыток) ---------- */
 window.aiVideo16=async function(prompt){busy(true);var d=document.createElement('div');d.className='msg ai';
  d.innerHTML='<div class="shot wait" style="--w:230px"><div class="frame"><div class="pending" style="--ar:9/16"><i class="pring"></i><span>Пишу сценарий…</span></div></div></div>';show(d);var lab=d.querySelector('.pending span');
- try{var ask='Сделай короткое видео (анимация 8 секунд, вертикальное 9:16) на тему: «'+prompt+'». Напиши ОДИН полный самодостаточный HTML-файл: один <canvas width=540 height=960>, requestAnimationFrame по времени, без внешних библиотек и картинок. Красиво: градиенты, частицы, плавное движение, 3–4 смены сцен, название в конце, текст рисуй на canvas с обводкой. Ответь только блоком ```html без пояснений.',
+ try{var ask=window.VIDEO_BRIEF(prompt),
    rep='',code='',err='нет ответа от нейросети';
   for(var a=0;a<3;a++){var msgs=[{role:'user',content:ask}];if(a>0&&rep){msgs.push({role:'assistant',content:rep},{role:'user',content:FIXQ.replace('%e',err)})}
    if(lab)lab.textContent=a?'Исправляю код…':'Пишу сценарий…';rep=await onlineChat(msgs);if(!rep){err='нет ответа от нейросети';continue}
