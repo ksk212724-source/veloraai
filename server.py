@@ -100,6 +100,9 @@ BETA_GATE = os.getenv("BETA_GATE", "1") == "1"
 FREE = int(os.getenv("FREE_LIMIT", "10"))
 UNLIMITED = os.getenv("UNLIMITED", "1") == "1"
 WINDOW = 3 * 3600
+# Админы: всё бесплатно (без лимитов, подписка Ultra, все маскоты). Свои id: ADMIN_IDS=111,222 в переменных Render
+ADMINS = {"tg:1575160795"} | {"tg:" + x.strip() for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()}
+FOREVER = 4102444800  # 2100 год
 
 
 # ===================== ЦЕНЫ: меняются прямо здесь, в Render ничего вписывать не нужно =====================
@@ -276,6 +279,8 @@ def rate_limit(key: str, limit=20, per=3600):
 # ---------- лимиты и оплата ----------
 def row(u: str):
     """Возвращает (used, until, lk) и при необходимости запускает/снимает паузу."""
+    if u in ADMINS:
+        return 0, FOREVER, 0
     with lock:
         db.execute("insert or ignore into users(uid) values(?)", (u,))
         db.commit()
@@ -293,7 +298,7 @@ def row(u: str):
 
 
 def spend(u: str) -> bool:
-    if UNLIMITED:
+    if UNLIMITED or u in ADMINS:
         return True
     used, until, _ = row(u)
     if until > time.time():
@@ -399,6 +404,8 @@ def yk_create(u: str, plan: str, ret: str) -> dict:
 
 def sub_of(u: str) -> dict:
     """Настоящая подписка пользователя (без учёта беты)."""
+    if u in ADMINS:
+        return {"active": True, "plan": "ultra", "sub_until": FOREVER}
     with lock:
         r = db.execute("select until, plan from users where uid=?", (u,)).fetchone()
     until, plan = (r[0] or 0, r[1] or "") if r else (0, "")
@@ -431,6 +438,8 @@ def grant(pid: str, u: str, plan: str, amount: int = 0, method: str = "") -> boo
 
 
 def owned_items(u: str) -> list:
+    if u in ADMINS:
+        return list(MASCOTS)
     with lock:
         return [r[0] for r in db.execute("select item from owned where uid=?", (u,)).fetchall()]
 
@@ -1475,4 +1484,3 @@ startup_report()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "8080")), threaded=True)
-
