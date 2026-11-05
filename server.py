@@ -195,6 +195,7 @@ create table if not exists promo_used(uid text, code text, t real, primary key(u
 create table if not exists promos(code text primary key, mascots text, plan text, days int, msg text);
 create table if not exists prices(key text primary key, rub int, stars int);
 create table if not exists admins(uid integer primary key, t real);
+create table if not exists revoked(uid text, item text, primary key(uid, item));
 create table if not exists bans(uid text primary key, reason text, t real);
 """)
 for _sql in ("alter table users add column lk real default 0",
@@ -265,6 +266,8 @@ def check_access(gate=True):
     _b = ban_of(uid())
     if _b is not None:
         abort(make_response(jsonify(error="Аккаунт заблокирован" + (f". Причина: {_b}" if _b else ""), banned=True), 403))
+    if not sub_ok_uid(uid()):
+        abort(make_response(jsonify(error="Подпишитесь на канал, чтобы пользоваться Velora", need_sub=True, channel=CHANNEL_URL), 403))
     if gate and BETA_GATE:  # при каждом открытии мини-приложения пароль вводится заново
         s = sessions.get(request.headers.get("X-Sess", ""))
         if not s or s[1] < time.time() or s[0] != uid():
@@ -1080,6 +1083,27 @@ def sync_pending(u: str):
             print("sync:", type(e).__name__, str(e)[:200])
 
 
+def _proof(u: str, item: str) -> str:
+    """Подпись покупки: по ней купленный маскот восстанавливается, даже если база на сервере потерялась."""
+    return hmac.new(("own:" + BOT_TOKEN).encode(), f"{u}:{item}".encode(), hashlib.sha256).hexdigest()[:32]
+
+
+@app.post("/api/shop/restore")
+def shop_restore():
+    check_access()
+    u = uid()
+    proofs = (request.get_json(silent=True) or {}).get("proofs") or {}
+    n = 0
+    with lock:
+        gone = {r[0] for r in db.execute("select item from revoked where uid=?", (u,)).fetchall()}
+        for item, sig in list(proofs.items())[:30]:
+            if item in MASCOTS and item not in GIFT_ONLY and item not in gone and isinstance(sig, str) \
+                    and hmac.compare_digest(sig, _proof(u, item)):
+                n += db.execute("insert or ignore into owned(uid,item,t) values(?,?,?)", (u, item, time.time())).rowcount
+        db.commit()
+    return jsonify(ok=True, restored=n)
+
+
 @app.get("/api/shop/me")
 def shop_me():
     """Магазин: какие маскоты куплены (источник правды: сервер) и сколько стоит маскот."""
@@ -1087,7 +1111,10 @@ def shop_me():
     u = uid()
     sync_pending(u)
     m = product("mascot:murz")
+    with lock:
+        rows = [r[0] for r in db.execute("select item from owned where uid=?", (u,)).fetchall()]
     return jsonify(owned=owned_items(u), eq=get_eq(u), price={"rub": m["rub"], "stars": m["stars"]},
+                   proofs={k: _proof(u, k) for k in rows if k in MASCOTS and k not in GIFT_ONLY},
                    prices={k: {"rub": v[0], "stars": v[1]} for k, v in MASCOT_PRICES.items()})
 
 
@@ -1388,6 +1415,67 @@ def db_promo(code: str):
     return p
 
 
+# ---------- обязательная подписка на канал ----------
+# REQUIRED_CHANNEL=@имя_канала (или -100... для приватного; тогда ещё CHANNEL_URL=https://t.me/+ссылка).
+# Бот должен быть администратором канала, иначе Telegram не даёт проверить подписку.
+REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "").strip()
+CHANNEL_URL = os.getenv("CHANNEL_URL", "").strip() or (
+    "https://t.me/" + REQUIRED_CHANNEL.lstrip("@") if REQUIRED_CHANNEL.startswith("@") else "")
+_sub_cache: dict = {}
+
+
+def is_subscribed(tid: int, fresh: bool = False) -> bool:
+    if not REQUIRED_CHANNEL or tid in ADMIN_IDS:
+        return True
+    c = _sub_cache.get(tid)
+    if c and not fresh and time.time() - c[1] < (300 if c[0] else 15):
+        return c[0]
+    try:
+        r = tg("getChatMember", chat_id=REQUIRED_CHANNEL, user_id=tid)
+    except Exception as e:  # noqa: BLE001
+        print("подписка: сеть", type(e).__name__)
+        return True  # сбой проверки не должен блокировать всех
+    if not r.get("ok"):
+        print("подписка: Telegram не дал проверить (бот не админ канала?):", str(r.get("description", ""))[:150])
+        return True
+    m = r.get("result") or {}
+    ok = m.get("status") in ("creator", "administrator", "member") or (m.get("status") == "restricted" and bool(m.get("is_member")))
+    _sub_cache[tid] = (ok, time.time())
+    return ok
+
+
+def sub_ok_uid(u: str, fresh: bool = False) -> bool:
+    return not u.startswith("tg:") or is_subscribed(int(u[3:]), fresh)
+
+
+def sub_markup():
+    rows = []
+    if CHANNEL_URL:
+        rows.append([{"text": "Подписаться на канал", "url": CHANNEL_URL}])
+    rows.append([{"text": "Я подписался", "callback_data": "sub:chk"}])
+    return {"inline_keyboard": rows}
+
+
+@app.get("/api/sub")
+def sub_status():
+    if ALLOW_BROWSER:
+        return jsonify(required=False, ok=True, channel="")
+    if not BOT_TOKEN or not valid_init_data(request.headers.get("X-Init-Data", "")):
+        abort(403)
+    return jsonify(required=bool(REQUIRED_CHANNEL), ok=sub_ok_uid(uid(), True), channel=CHANNEL_URL)
+
+
+def sub_callback(cq: dict):
+    frm = (cq.get("from") or {}).get("id")
+    chat_id = ((cq.get("message") or {}).get("chat") or {}).get("id")
+    if is_subscribed(frm, True):
+        tg("answerCallbackQuery", callback_query_id=cq["id"], text="Отлично, доступ открыт")
+        tg("sendMessage", chat_id=chat_id, text=HELP, reply_markup=app_button())
+    else:
+        tg("answerCallbackQuery", callback_query_id=cq["id"], text="Подписка не найдена. Подпишитесь на канал и нажмите ещё раз",
+           show_alert=True)
+
+
 def ban_of(u: str):
     """None, если не забанен; иначе причина (может быть пустой строкой)."""
     with lock:
@@ -1654,13 +1742,16 @@ def admin_callback(cq: dict):
         elif a in ("ua", "ud") and p[2] in MASCOTS:
             with lock:
                 if a == "ua":
+                    db.execute("delete from revoked where uid=? and item=?", (f"tg:{p[3]}", p[2]))
                     db.execute("insert or ignore into owned(uid,item,t) values(?,?,?)", (f"tg:{p[3]}", p[2], time.time()))
                 else:
                     db.execute("delete from owned where uid=? and item=?", (f"tg:{p[3]}", p[2]))
+                    db.execute("insert or ignore into revoked(uid,item) values(?,?)", (f"tg:{p[3]}", p[2]))
                 db.commit()
             mascot_menu(chat_id, mid, int(p[3]))
         elif a == "uall":
             with lock:
+                db.execute("delete from revoked where uid=?", (f"tg:{p[2]}",))
                 for k in MASCOTS:
                     db.execute("insert or ignore into owned(uid,item,t) values(?,?,?)", (f"tg:{p[2]}", k, time.time()))
                 db.commit()
@@ -1831,6 +1922,8 @@ def handle_update(u: dict):
     if is_payment(u):
         return handle_payment(u)
     if u.get("callback_query"):
+        if (u["callback_query"].get("data") or "") == "sub:chk":
+            return sub_callback(u["callback_query"])
         return admin_callback(u["callback_query"])
     msg = u.get("message") or {}
     chat = msg.get("chat") or {}
@@ -1868,6 +1961,9 @@ def handle_update(u: dict):
             _b = ban_of(who)
             if _b is not None:
                 say("Ваш аккаунт заблокирован." + (f"\nПричина: {_b}" if _b else ""))
+                return
+            if not is_subscribed(frm):
+                say("Чтобы пользоваться Velora, подпишитесь на наш канал, затем нажмите «Я подписался».", reply_markup=sub_markup())
                 return
         if cmd in ("/start", "/help"):
             say(HELP, reply_markup=app_button())
@@ -1960,6 +2056,16 @@ def setup_bot():
     # бот открыт для всех, пароль спрашивает само мини-приложение (/api/unlock)
     tg("setChatMenuButton", menu_button={"type": "web_app", "text": "Velora",
                                          "web_app": {"url": WEBAPP_URL}})
+    if REQUIRED_CHANNEL:
+        try:
+            me = tg("getMe").get("result") or {}
+            r = tg("getChatMember", chat_id=REQUIRED_CHANNEL, user_id=me.get("id"))
+            st = (r.get("result") or {}).get("status")
+            print("Обязательная подписка:", REQUIRED_CHANNEL, "бот в канале:", st or r.get("description"))
+            if st not in ("administrator", "creator"):
+                print("!!! сделайте бота администратором канала, иначе подписку не проверить и она не будет требоваться")
+        except Exception as e:  # noqa: BLE001
+            print("проверка канала:", type(e).__name__)
     tg("setMyCommands", commands=[
         {"command": "img", "description": "Нарисовать фото: /img описание"},
         {"command": "video", "description": "Снять видео: /video описание"},
@@ -2008,6 +2114,8 @@ def startup_report():
         w.append("ЮKassa не подключена: нет YOOKASSA_SHOP_ID / YOOKASSA_SECRET_KEY")
     if not (GEMINI_KEY or OR_KEY or LLM_API_URL):
         w.append("нет ключа нейросети: чат пойдёт через бесплатный Pollinations, он нестабилен")
+    if not REQUIRED_CHANNEL:
+        w.append("обязательная подписка выключена: задайте REQUIRED_CHANNEL=@ваш_канал (бот должен быть админом канала)")
     if not ADMIN_IDS and not ADMIN_PASSWORD:
         w.append("админка бота выключена: задайте ADMIN_IDS (ваш Telegram ID) и/или ADMIN_PASSWORD")
     if UNLIMITED:
