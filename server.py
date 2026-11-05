@@ -11,7 +11,7 @@
   YOOKASSA_SECRET_KEY       секретный ключ ЮKassa. Только в переменных окружения, не в коде
   и ключ нейросети: GEMINI_API_KEY или OPENROUTER_API_KEY (или LLM_API_URL / LLM_API_KEY / LLM_MODEL)
 
-ЦЕНЫ: таблица PRICES в этом файле (Plus 99 ₽, Pro 149 ₽, Ultra 349 ₽, пробный Pro 49 ₽; цены маскотов в MASCOT_PRICES, 29-99 ₽).
+ЦЕНЫ: таблица PRICES в этом файле (Plus 49 ₽, Pro 149 ₽, Ultra 349 ₽, пробный Pro 29 ₽; цены маскотов в MASCOT_PRICES, 29-99 ₽).
 МАГАЗИН МАСКОТОВ: POST /api/pay {"item":"murz","method":"yookassa"|"stars"} создаёт платёж, GET /api/shop/me отдаёт купленных.
   Покупка записывается в таблицу owned только после подтверждения оплаты (вебхук ЮKassa / успешный платёж Stars).
 
@@ -41,7 +41,7 @@ import uuid
 from pathlib import Path
 
 import requests
-from flask import Flask, abort, jsonify, request, send_from_directory
+from flask import Flask, abort, jsonify, make_response, request, send_from_directory
 
 BASE = Path(__file__).parent
 MEDIA = Path(os.getenv("MEDIA_DIR") or BASE / "media")
@@ -192,9 +192,15 @@ create table if not exists beta(uid text primary key);
 create table if not exists owned(uid text, item text, t real, primary key(uid, item));
 create table if not exists skinpref(uid text primary key, eq text, t real);
 create table if not exists promo_used(uid text, code text, t real, primary key(uid, code));
+create table if not exists promos(code text primary key, mascots text, plan text, days int, msg text);
+create table if not exists prices(key text primary key, rub int, stars int);
+create table if not exists admins(uid integer primary key, t real);
+create table if not exists bans(uid text primary key, reason text, t real);
 """)
 for _sql in ("alter table users add column lk real default 0",
              "alter table users add column plan text default ''",
+             "alter table users add column frozen_left real default 0",
+             "alter table users add column frozen_plan text default ''",
              "alter table pays add column plan text default ''",
              "alter table pays add column amount int default 0",
              "alter table pays add column method text default ''"):
@@ -256,6 +262,9 @@ def check_access(gate=True):
         return
     if not BOT_TOKEN or not valid_init_data(request.headers.get("X-Init-Data", "")):
         abort(403)
+    _b = ban_of(uid())
+    if _b is not None:
+        abort(make_response(jsonify(error="Аккаунт заблокирован" + (f". Причина: {_b}" if _b else ""), banned=True), 403))
     if gate and BETA_GATE:  # при каждом открытии мини-приложения пароль вводится заново
         s = sessions.get(request.headers.get("X-Sess", ""))
         if not s or s[1] < time.time() or s[0] != uid():
@@ -461,6 +470,8 @@ def owned_items(u: str) -> list:
 
 def purchase_blocked(u: str, plan: str) -> str:
     """Пустая строка, если покупать можно; иначе причина."""
+    if frozen_left(u) > 0 and not plan.startswith("mascot:"):
+        return "Подписка заморожена администратором, обратитесь в поддержку"
     if plan == "pro_trial":
         return trial_blocked(u)
     if plan.startswith("mascot:") and plan[7:] in GIFT_ONLY:
@@ -510,7 +521,7 @@ def bot_username() -> str:
 
 
 # ---------- Telegram Stars ----------
-ALLOWED = ["message", "pre_checkout_query"]
+ALLOWED = ["message", "pre_checkout_query", "callback_query"]
 
 
 def stars_invoice(u: str, plan: str) -> str:
@@ -1114,7 +1125,7 @@ def promo_apply():
     rate_limit(client_ip(), limit=30, per=3600)
     u = uid()
     code = str((request.get_json(silent=True) or {}).get("code") or "").strip().lower()
-    p = PROMOS.get(code)
+    p = PROMOS.get(code) or db_promo(code)
     if not p:
         return jsonify(error="Такого промокода нет"), 404
     with lock:
@@ -1343,6 +1354,447 @@ def send_to_chat():
     return (jsonify(ok=True), 200) if r.get("ok") else (jsonify(error="Не удалось отправить."), 502)
 
 
+# ===================== АДМИНКА В TELEGRAM-БОТЕ (только бот, в мини-приложении её нет) =====================
+# Доступ: ваш Telegram ID в ADMIN_IDS (через запятую) и/или пароль ADMIN_PASSWORD: /admin пароль
+# Команда: /admin. Разделы: статистика и платежи, пользователи, промокоды, цены, рассылка.
+ADMIN_IDS = {int(x) for x in re.findall(r"\d+", os.getenv("ADMIN_IDS", ""))}
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+adm_state: dict = {}
+_adm_tries: dict = {}
+PLAN_NAMES = {"plus": "Plus", "pro": "Pro", "ultra": "Ultra", "pro_trial": "Pro 3 дня"}
+
+
+def load_prices():
+    """Цены, изменённые из админки, лежат в базе и перекрывают таблицы PRICES / MASCOT_PRICES."""
+    with lock:
+        rows = db.execute("select key, rub, stars from prices").fetchall()
+    for k, rub, st in rows:
+        if k in PLANS:
+            PLANS[k]["rub"], PLANS[k]["stars"] = rub, st
+            PRICES[k] = (rub, st)
+        elif k in MASCOTS:
+            MASCOT_PRICES[k] = (rub, st)
+
+
+def db_promo(code: str):
+    with lock:
+        r = db.execute("select mascots, plan, days, msg from promos where code=?", (code,)).fetchone()
+    if not r:
+        return None
+    m = r[0]
+    p = {"mascots": "all" if m == "all" else [x for x in m.split(",") if x], "msg": r[3] or "Промокод принят"}
+    if r[1]:
+        p["plan"], p["days"] = r[1], r[2] or 30
+    return p
+
+
+def ban_of(u: str):
+    """None, если не забанен; иначе причина (может быть пустой строкой)."""
+    with lock:
+        r = db.execute("select reason from bans where uid=?", (u,)).fetchone()
+    return None if r is None else (r[0] or "")
+
+
+def frozen_left(u: str) -> float:
+    with lock:
+        r = db.execute("select frozen_left from users where uid=?", (u,)).fetchone()
+    return (r[0] or 0) if r else 0
+
+
+def notify_user(tid: int, text: str) -> bool:
+    """Пуш пользователю в Telegram. False, если не доставлено (например, он не запускал бота)."""
+    try:
+        return bool(tg("sendMessage", chat_id=tid, text=text).get("ok"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def freeze_sub(u: str) -> bool:
+    """Замораживает подписку: оставшиеся дни откладываются и не сгорают."""
+    now = time.time()
+    with lock:
+        r = db.execute("select until, plan from users where uid=?", (u,)).fetchone()
+        if not r or (r[0] or 0) <= now:
+            return False
+        db.execute("update users set frozen_left=?, frozen_plan=?, until=0 where uid=?", (r[0] - now, r[1] or "plus", u))
+        db.commit()
+    return True
+
+
+def unfreeze_sub(u: str) -> bool:
+    now = time.time()
+    with lock:
+        r = db.execute("select until, plan, frozen_left, frozen_plan from users where uid=?", (u,)).fetchone()
+        if not r or (r[2] or 0) <= 0:
+            return False
+        active = (r[0] or 0) > now
+        db.execute("update users set until=?, plan=?, frozen_left=0, frozen_plan='' where uid=?",
+                   (max(now, r[0] or 0) + r[2], (r[1] if active else (r[3] or "plus")), u))
+        db.commit()
+    return True
+
+
+def is_admin(frm) -> bool:
+    if frm in ADMIN_IDS:
+        return True
+    with lock:
+        return bool(db.execute("select 1 from admins where uid=?", (frm,)).fetchone())
+
+
+def _fmt_t(t) -> str:
+    return time.strftime("%d.%m %H:%M", time.gmtime((t or 0) + 3 * 3600))
+
+
+def adm_show(chat_id, mid, text, rows):
+    kb = {"inline_keyboard": rows}
+    if mid:
+        r = tg("editMessageText", chat_id=chat_id, message_id=mid, text=text[:4000], reply_markup=kb)
+        if r.get("ok") or "not modified" in str(r.get("description", "")):
+            return
+    tg("sendMessage", chat_id=chat_id, text=text[:4000], reply_markup=kb)
+
+
+def _b(text, data):
+    return {"text": text, "callback_data": data}
+
+
+BACK = [[_b("« Меню", "a:m")]]
+
+
+def adm_menu(chat_id, mid=None):
+    adm_state.pop(chat_id, None)
+    adm_show(chat_id, mid, "Админка Velora", [
+        [_b("📊 Статистика", "a:s"), _b("👤 Пользователи", "a:u")],
+        [_b("🎟 Промокоды", "a:p"), _b("💰 Цены", "a:r")],
+        [_b("📣 Рассылка", "a:b"), _b("🚫 Баны", "a:bl")]])
+
+
+def adm_stats(chat_id, mid):
+    now = time.time()
+    with lock:
+        n_users = db.execute("select count(*) from users").fetchone()[0]
+        subs = db.execute("select plan, count(*) from users where until>? group by plan", (now,)).fetchall()
+        n_frozen = db.execute("select count(*) from users where frozen_left>0").fetchone()[0]
+        n_bans = db.execute("select count(*) from bans").fetchone()[0]
+        rev = {}
+        for name, since in (("за 24 часа", now - 86400), ("за 7 дней", now - 7 * 86400),
+                            ("за 30 дней", now - 30 * 86400), ("всего", 0)):
+            rev[name] = db.execute("select method, count(*), coalesce(sum(amount),0) from pays "
+                                   "where status='paid' and t>=? group by method", (since,)).fetchall()
+        last = db.execute("select t, uid, plan, amount, method from pays where status='paid' "
+                          "order by t desc limit 8").fetchall()
+    out = [f"Пользователей в базе: {n_users}",
+           "Активные подписки: " + (", ".join(f"{PLAN_NAMES.get(p, p)} {c}" for p, c in subs) or "нет"),
+           f"Заморожено: {n_frozen}, забанено: {n_bans}", "",
+           "Выручка:"]
+    for name, rows in rev.items():
+        d = {m: (c, s) for m, c, s in rows}
+        yk, st = d.get("yookassa", (0, 0)), d.get("stars", (0, 0))
+        out.append(f"• {name}: {yk[1]} ₽ ({yk[0]} опл.), {st[1]} ⭐ ({st[0]} опл.)")
+    out += ["", "Последние платежи (МСК):"]
+    for t, u, plan, amt, m in last:
+        out.append(f"{_fmt_t(t)} · {u[3:]} · {plan.replace('mascot:', 'маскот ')} · {amt} {'⭐' if m == 'stars' else '₽'}")
+    if not last:
+        out.append("пока нет")
+    adm_show(chat_id, mid, "\n".join(out), [[_b("Обновить", "a:s")]] + BACK)
+
+
+def user_card(chat_id, mid, tid: int, note: str = ""):
+    u = f"tg:{tid}"
+    s = sub_of(u)
+    with lock:
+        seen = db.execute("select 1 from users where uid=?", (u,)).fetchone()
+        paid = db.execute("select count(*), coalesce(sum(amount),0) from pays where uid=? and status='paid'", (u,)).fetchone()
+    own = [MASCOTS.get(i, i) for i in owned_items(u)]
+    ban, fz = ban_of(u), frozen_left(u)
+    txt = ((note + "\n\n") if note else "") + (f"Пользователь {tid}" + ("" if seen else " (в базе пока нет)") + "\n"
+           f"Подписка: {PLAN_NAMES.get(s['plan'], s['plan']) + ' до ' + _fmt_t(s['sub_until']) if s['active'] else 'нет'}\n"
+           f"Маскоты: {', '.join(own) or 'нет'}\nВыбран: {get_eq(u)}\nОплат: {paid[0]}"
+           + (f"\nЗаморожена: осталось {fz / 86400:.1f} дн." if fz > 0 else "")
+           + ("\n🚫 ЗАБАНЕН" + (f": {ban}" if ban else "") if ban is not None else ""))
+    adm_show(chat_id, mid, txt, [
+        [_b("Plus 30д", f"a:ug:plus:{tid}"), _b("Pro 30д", f"a:ug:pro:{tid}"), _b("Ultra 30д", f"a:ug:ultra:{tid}")],
+        [_b("Снять подписку", f"a:ur:{tid}"), _b("Маскоты", f"a:um:{tid}")],
+        [_b("▶️ Разморозить", f"a:uth:{tid}") if fz > 0 else _b("❄️ Заморозить подписку", f"a:uf:{tid}")],
+        [_b("✅ Разбанить", f"a:uu:{tid}") if ban is not None else _b("🚫 Забанить", f"a:ub:{tid}")],
+        [_b("Другой ID", "a:u")] + BACK[0]])
+
+
+def mascot_menu(chat_id, mid, tid: int):
+    have = set(owned_items(f"tg:{tid}"))
+    btns = [_b(("✅ " if k in have else "➕ ") + n, f"a:{'ud' if k in have else 'ua'}:{k}:{tid}")
+            for k, n in MASCOTS.items()]
+    rows = [btns[i:i + 2] for i in range(0, len(btns), 2)]
+    rows.append([_b("Выдать все", f"a:uall:{tid}")])
+    rows.append([_b("« К пользователю", f"a:uc:{tid}")])
+    adm_show(chat_id, mid, f"Маскоты пользователя {tid}\n✅ есть (нажмите, чтобы забрать)\n➕ нет (нажмите, чтобы выдать)", rows)
+
+
+def promo_list(chat_id, mid):
+    with lock:
+        rows = db.execute("select code, mascots, plan, days from promos order by rowid").fetchall()
+    out = ["Промокоды из админки:"]
+    kb = []
+    for c, m, p, d in rows:
+        out.append(f"• {c}: маскоты {m or '-'}, тариф {p or '-'}" + (f" {d} дн." if p else ""))
+        kb.append([_b(f"Удалить «{c}»", f"a:pd:{c}")])
+    if not rows:
+        out.append("пока нет")
+    out.append("\nВстроенные (в коде): " + ", ".join(sorted(PROMOS)))
+    adm_show(chat_id, mid, "\n".join(out), [[_b("➕ Новый промокод", "a:pn")]] + kb + BACK)
+
+
+def ban_list(chat_id, mid):
+    with lock:
+        rows = db.execute("select uid, reason, t from bans order by t desc limit 30").fetchall()
+    out = ["Забаненные:"] + [f"• {u[3:] if u.startswith('tg:') else u} · {_fmt_t(t)}" + (f" · {r}" if r else "") for u, r, t in rows]
+    if not rows:
+        out.append("никого нет")
+    kb = [[_b(f"Разбанить {u[3:]}", f"a:uu:{u[3:]}")] for u, _, _ in rows if u.startswith("tg:")]
+    adm_show(chat_id, mid, "\n".join(out), kb + BACK)
+
+
+def price_list(chat_id, mid):
+    btns = [_b(f"{PLAN_NAMES[k]}: {PLANS[k]['rub']}₽ {PLANS[k]['stars']}⭐", f"a:re:{k}") for k in PLANS]
+    btns += [_b(f"{n}: {MASCOT_PRICES.get(k, PRICES['mascot'])[0]}₽ {MASCOT_PRICES.get(k, PRICES['mascot'])[1]}⭐", f"a:re:{k}")
+             for k, n in MASCOTS.items() if k not in GIFT_ONLY]
+    adm_show(chat_id, mid, "Цены. Нажмите, чтобы изменить. Новая цена сразу действует в приложении и при оплате.",
+             [btns[i:i + 2] for i in range(0, len(btns), 2)] + BACK)
+
+
+def all_tg_users() -> list:
+    ids = set()
+    with lock:
+        for t in ("users", "beta", "pays", "owned", "skinpref"):
+            for (u,) in db.execute(f"select distinct uid from {t}").fetchall():
+                if str(u).startswith("tg:") and str(u)[3:].isdigit():
+                    ids.add(int(str(u)[3:]))
+    return sorted(ids)
+
+
+def _broadcast(admin_chat, text):
+    ok = bad = 0
+    for cid in all_tg_users():
+        try:
+            r = tg("sendMessage", chat_id=cid, text=text[:4000])
+            if r.get("ok"):
+                ok += 1
+            else:
+                bad += 1
+                if r.get("error_code") == 429:
+                    time.sleep(int((r.get("parameters") or {}).get("retry_after", 3)))
+        except Exception:  # noqa: BLE001
+            bad += 1
+        time.sleep(0.06)
+    tg("sendMessage", chat_id=admin_chat, text=f"Рассылка завершена: доставлено {ok}, не доставлено {bad}")
+
+
+def give_sub(tid: int, plan: str, days: int):
+    u = f"tg:{tid}"
+    with lock:
+        db.execute("insert or ignore into users(uid) values(?)", (u,))
+        until = db.execute("select until from users where uid=?", (u,)).fetchone()[0] or 0
+        db.execute("update users set until=?, plan=? where uid=?", (max(time.time(), until) + days * 86400, plan, u))
+        db.commit()
+
+
+def admin_callback(cq: dict):
+    frm = (cq.get("from") or {}).get("id")
+    msg = cq.get("message") or {}
+    chat_id, mid = (msg.get("chat") or {}).get("id"), msg.get("message_id")
+    data = cq.get("data") or ""
+    if not data.startswith("a:"):
+        return
+    if not is_admin(frm):
+        tg("answerCallbackQuery", callback_query_id=cq["id"], text="Нет доступа", show_alert=True)
+        return
+    tg("answerCallbackQuery", callback_query_id=cq["id"])
+    p = data.split(":")
+    a = p[1]
+    try:
+        if a == "m":
+            adm_menu(chat_id, mid)
+        elif a == "s":
+            adm_stats(chat_id, mid)
+        elif a == "u":
+            adm_state[chat_id] = {"act": "user"}
+            adm_show(chat_id, mid, "Пришлите Telegram ID пользователя (число). Отмена: /cancel", BACK)
+        elif a == "uc":
+            user_card(chat_id, mid, int(p[2]))
+        elif a == "ug":
+            give_sub(int(p[3]), p[2], 30)
+            tg("answerCallbackQuery", callback_query_id=cq["id"], text=f"Выдан {PLAN_NAMES[p[2]]} на 30 дней")
+            user_card(chat_id, mid, int(p[3]))
+        elif a == "ur":
+            with lock:
+                db.execute("update users set until=0, frozen_left=0 where uid=?", (f"tg:{p[2]}",))
+                db.commit()
+            user_card(chat_id, mid, int(p[2]))
+        elif a == "ub":
+            adm_state[chat_id] = {"act": "ban", "tid": int(p[2])}
+            adm_show(chat_id, mid, f"Бан пользователя {p[2]}. Пришлите причину (она будет показана пользователю) "
+                     "или «-», если без причины. Отмена: /cancel", [[_b("« Назад", f"a:uc:{p[2]}")]])
+        elif a == "uu":
+            was = ban_of(f"tg:{p[2]}") is not None
+            with lock:
+                db.execute("delete from bans where uid=?", (f"tg:{p[2]}",))
+                db.commit()
+            sent = was and notify_user(int(p[2]), "Ваш аккаунт разблокирован. Можно пользоваться Velora снова.")
+            user_card(chat_id, mid, int(p[2]), "Пользователь разбанен" + (", уведомление отправлено" if sent else (", уведомление не доставлено" if was else "")))
+        elif a == "uf":
+            ok = freeze_sub(f"tg:{p[2]}")
+            user_card(chat_id, mid, int(p[2]), "Подписка заморожена, дни сохранены" if ok else "Нет активной подписки, нечего замораживать")
+        elif a == "uth":
+            ok = unfreeze_sub(f"tg:{p[2]}")
+            user_card(chat_id, mid, int(p[2]), "Подписка разморожена, дни вернулись" if ok else "Подписка не была заморожена")
+        elif a == "bl":
+            ban_list(chat_id, mid)
+        elif a == "um":
+            mascot_menu(chat_id, mid, int(p[2]))
+        elif a in ("ua", "ud") and p[2] in MASCOTS:
+            with lock:
+                if a == "ua":
+                    db.execute("insert or ignore into owned(uid,item,t) values(?,?,?)", (f"tg:{p[3]}", p[2], time.time()))
+                else:
+                    db.execute("delete from owned where uid=? and item=?", (f"tg:{p[3]}", p[2]))
+                db.commit()
+            mascot_menu(chat_id, mid, int(p[3]))
+        elif a == "uall":
+            with lock:
+                for k in MASCOTS:
+                    db.execute("insert or ignore into owned(uid,item,t) values(?,?,?)", (f"tg:{p[2]}", k, time.time()))
+                db.commit()
+            mascot_menu(chat_id, mid, int(p[2]))
+        elif a == "p":
+            promo_list(chat_id, mid)
+        elif a == "pn":
+            adm_state[chat_id] = {"act": "promo"}
+            adm_show(chat_id, mid,
+                     "Пришлите промокод одной строкой:\nкод | маскоты | тариф | дни | сообщение\n\n"
+                     "маскоты: all, - или id через запятую (" + ", ".join(MASCOTS) + ")\n"
+                     "тариф: plus, pro, ultra или -\n\nПример:\nлето | donut,boo | pro | 7 | Лето! Pro на неделю и два маскота\n\nОтмена: /cancel",
+                     [[_b("« Назад", "a:p")]])
+        elif a == "pd":
+            with lock:
+                db.execute("delete from promos where code=?", (":".join(p[2:]),))
+                db.commit()
+            promo_list(chat_id, mid)
+        elif a == "r":
+            price_list(chat_id, mid)
+        elif a == "re" and (p[2] in PLANS or p[2] in MASCOTS):
+            adm_state[chat_id] = {"act": "price", "key": p[2]}
+            cur = (PLANS[p[2]]["rub"], PLANS[p[2]]["stars"]) if p[2] in PLANS else MASCOT_PRICES.get(p[2], PRICES["mascot"])
+            adm_show(chat_id, mid, f"{PLAN_NAMES.get(p[2]) or MASCOTS[p[2]]}: сейчас {cur[0]} ₽ и {cur[1]} ⭐\n"
+                     "Пришлите новую цену двумя числами: рубли и звёзды, например 99 80\nОтмена: /cancel",
+                     [[_b("« Назад", "a:r")]])
+        elif a == "b":
+            adm_state[chat_id] = {"act": "bc"}
+            adm_show(chat_id, mid, f"Пришлите текст рассылки. Получат до {len(all_tg_users())} пользователей, "
+                     "которые открывали приложение или бота. Перед отправкой будет подтверждение. Отмена: /cancel", BACK)
+        elif a == "bs" and adm_state.get(chat_id, {}).get("act") == "bc_confirm":
+            text = adm_state.pop(chat_id)["text"]
+            adm_show(chat_id, mid, "Рассылка пошла, пришлю итог.", BACK)
+            threading.Thread(target=_broadcast, args=(chat_id, text), daemon=True).start()
+    except Exception as e:  # noqa: BLE001
+        print("admin:", type(e).__name__, str(e)[:200])
+        tg("sendMessage", chat_id=chat_id, text="Ошибка, попробуйте ещё раз или /admin")
+
+
+def admin_text(chat_id, frm, msg_id, cmd, arg, text) -> bool:
+    """True, если сообщение обработано админкой."""
+    if cmd == "/admin":
+        if is_admin(frm):
+            adm_menu(chat_id)
+            return True
+        if arg and ADMIN_PASSWORD:
+            now = time.time()
+            tries = [t for t in _adm_tries.get(frm, []) if now - t < 3600]
+            _adm_tries[frm] = tries + [now]
+            try:
+                tg("deleteMessage", chat_id=chat_id, message_id=msg_id)
+            except Exception:  # noqa: BLE001
+                pass
+            if len(tries) >= 5:
+                tg("sendMessage", chat_id=chat_id, text="Слишком много попыток, подождите час.")
+            elif hmac.compare_digest(arg, ADMIN_PASSWORD):
+                with lock:
+                    db.execute("insert or ignore into admins(uid,t) values(?,?)", (frm, now))
+                    db.commit()
+                adm_menu(chat_id)
+            else:
+                tg("sendMessage", chat_id=chat_id, text="Неверный пароль.")
+            return True
+        tg("sendMessage", chat_id=chat_id, text="Нет доступа.")
+        return True
+    st = adm_state.get(chat_id)
+    if not st or not is_admin(frm):
+        return False
+    if cmd == "/cancel":
+        adm_menu(chat_id)
+        return True
+    if cmd:  # любая другая команда сбрасывает ввод
+        adm_state.pop(chat_id, None)
+        return False
+    act = st["act"]
+    if act == "user":
+        m = re.search(r"\d{5,}", text)
+        if not m:
+            tg("sendMessage", chat_id=chat_id, text="Нужен числовой Telegram ID. Ещё раз или /cancel")
+            return True
+        adm_state.pop(chat_id, None)
+        user_card(chat_id, None, int(m.group()))
+    elif act == "price":
+        n = re.findall(r"\d+", text)
+        if len(n) != 2 or int(n[0]) < 1 or int(n[1]) < 1:
+            tg("sendMessage", chat_id=chat_id, text="Нужно два числа: рубли и звёзды, например 99 80. Ещё раз или /cancel")
+            return True
+        with lock:
+            db.execute("insert into prices(key,rub,stars) values(?,?,?) on conflict(key) do update "
+                       "set rub=excluded.rub, stars=excluded.stars", (st["key"], int(n[0]), int(n[1])))
+            db.commit()
+        load_prices()
+        adm_state.pop(chat_id, None)
+        price_list(chat_id, None)
+    elif act == "promo":
+        parts = [x.strip() for x in text.split("|")]
+        if len(parts) < 4:
+            tg("sendMessage", chat_id=chat_id, text="Формат: код | маскоты | тариф | дни | сообщение. Ещё раз или /cancel")
+            return True
+        code = parts[0].lower()[:20]
+        ms = parts[1].lower().replace(" ", "")
+        mlist = [] if ms in ("", "-") else (["all"] if ms == "all" else ms.split(","))
+        plan = parts[2].lower()
+        plan = "" if plan in ("", "-") else plan
+        days = int(re.sub(r"\D", "", parts[3]) or 0)
+        bad = [x for x in mlist if x != "all" and x not in MASCOTS]
+        if not code or bad or (plan and plan not in ("plus", "pro", "ultra")) or (plan and days < 1) or not (mlist or plan):
+            tg("sendMessage", chat_id=chat_id, text="Что-то не так" + (f" (нет маскота: {', '.join(bad)})" if bad else "") +
+               ". Проверьте формат или /cancel")
+            return True
+        with lock:
+            db.execute("insert or replace into promos(code,mascots,plan,days,msg) values(?,?,?,?,?)",
+                       (code, ",".join(mlist), plan, days if plan else 0, (parts[4] if len(parts) > 4 else "")[:200]))
+            db.commit()
+        adm_state.pop(chat_id, None)
+        promo_list(chat_id, None)
+    elif act == "ban":
+        reason = "" if text.strip() in ("-", "—") else text.strip()[:300]
+        with lock:
+            db.execute("insert or replace into bans(uid,reason,t) values(?,?,?)", (f"tg:{st['tid']}", reason, time.time()))
+            db.commit()
+        adm_state.pop(chat_id, None)
+        sent = notify_user(st["tid"], "Ваш аккаунт заблокирован." + (f"\nПричина: {reason}" if reason else ""))
+        user_card(chat_id, None, st["tid"], "Пользователь забанен, " + ("уведомление отправлено" if sent else "уведомление не доставлено (он не запускал бота)"))
+    elif act == "bc":
+        adm_state[chat_id] = {"act": "bc_confirm", "text": text}
+        adm_show(chat_id, None, f"Отправить {len(all_tg_users())} пользователям?\n\n{text}",
+                 [[_b("✅ Отправить", "a:bs"), _b("Отмена", "a:m")]])
+    return True
+
+
+load_prices()
+# ==========================================================================================================
+
 WH_SECRET = hashlib.sha256(("velora-wh:" + BOT_TOKEN).encode()).hexdigest()[:40]
 USE_WEBHOOK = WEBAPP_URL.startswith("https://") and os.getenv("USE_POLLING") != "1"
 bot_hist: dict = {}
@@ -1378,6 +1830,8 @@ def send_media(chat_id, kind: str, prompt: str, opts=None):
 def handle_update(u: dict):
     if is_payment(u):
         return handle_payment(u)
+    if u.get("callback_query"):
+        return admin_callback(u["callback_query"])
     msg = u.get("message") or {}
     chat = msg.get("chat") or {}
     chat_id, frm = chat.get("id"), (msg.get("from") or {}).get("id")
@@ -1408,6 +1862,13 @@ def handle_update(u: dict):
                 tg("deleteMessage", chat_id=chat_id, message_id=mid)
             except Exception:  # noqa: BLE001
                 pass
+        if admin_text(chat_id, frm, msg.get("message_id"), cmd, arg, text):
+            return
+        if not is_admin(frm):
+            _b = ban_of(who)
+            if _b is not None:
+                say("Ваш аккаунт заблокирован." + (f"\nПричина: {_b}" if _b else ""))
+                return
         if cmd in ("/start", "/help"):
             say(HELP, reply_markup=app_button())
             return
@@ -1547,6 +2008,8 @@ def startup_report():
         w.append("ЮKassa не подключена: нет YOOKASSA_SHOP_ID / YOOKASSA_SECRET_KEY")
     if not (GEMINI_KEY or OR_KEY or LLM_API_URL):
         w.append("нет ключа нейросети: чат пойдёт через бесплатный Pollinations, он нестабилен")
+    if not ADMIN_IDS and not ADMIN_PASSWORD:
+        w.append("админка бота выключена: задайте ADMIN_IDS (ваш Telegram ID) и/или ADMIN_PASSWORD")
     if UNLIMITED:
         w.append("UNLIMITED=1: лимиты сняты для всех (это режим беты)")
     for x in w:
