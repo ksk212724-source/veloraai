@@ -11,7 +11,7 @@
   YOOKASSA_SECRET_KEY       секретный ключ ЮKassa. Только в переменных окружения, не в коде
   и ключ нейросети: GEMINI_API_KEY или OPENROUTER_API_KEY (или LLM_API_URL / LLM_API_KEY / LLM_MODEL)
 
-ЦЕНЫ: таблица PRICES в этом файле (сейчас везде 1 ₽ и 1 ⭐; ключ "mascot" это цена любого маскота из магазина).
+ЦЕНЫ: таблица PRICES в этом файле (Plus 99 ₽, Pro 149 ₽, Ultra 349 ₽, пробный Pro 49 ₽; цены маскотов в MASCOT_PRICES, 29-99 ₽).
 МАГАЗИН МАСКОТОВ: POST /api/pay {"item":"murz","method":"yookassa"|"stars"} создаёт платёж, GET /api/shop/me отдаёт купленных.
   Покупка записывается в таблицу owned только после подтверждения оплаты (вебхук ЮKassa / успешный платёж Stars).
 
@@ -104,20 +104,24 @@ WINDOW = 3 * 3600
 
 # ===================== ЦЕНЫ: меняются прямо здесь, в Render ничего вписывать не нужно =====================
 #            рубли  звёзды
-PRICES = {"plus":      (1, 1),
-          "pro":       (1, 1),
-          "ultra":     (1, 1),
-          "pro_trial": (1, 1),   # пробный Pro на 3 дня
-          "mascot":    (1, 1)}   # любой платный маскот из магазина (покупка навсегда)
+PRICES = {"plus":      (99, 80),
+          "pro":       (149, 130),
+          "ultra":     (349, 290),
+          "pro_trial": (49, 25),   # пробный Pro на 3 дня
+          "mascot":    (49, 40)}    # маскот, которого нет в MASCOT_PRICES
+
+# цены маскотов (рубли, звёзды), покупка навсегда
+MASCOT_PRICES = {"boo": (29, 25), "murz": (39, 32), "donut": (49, 40), "ten": (59, 48),
+                 "orbit": (69, 55), "kleshnya": (79, 63), "ogon": (89, 71), "bit": (99, 80)}
 # ===========================================================================================================
 
 PLANS = {
     "plus": {"days": 30, "grant": "plus", "rub": PRICES["plus"][0], "stars": PRICES["plus"][1],
-             "title": "Velora Plus", "desc": "600K токенов в день, фото без лимита, голос и проекты"},
+             "title": "Velora Plus", "desc": "50K токенов за период, фото без лимита, перерыв 2 часа"},
     "pro": {"days": 30, "grant": "pro", "rub": PRICES["pro"][0], "stars": PRICES["pro"][1],
-            "title": "Velora Pro", "desc": "1,5M токенов в день, видео из кода, глубокое исследование"},
+            "title": "Velora Pro", "desc": "150K токенов за период, создание игр, перерыв 2 часа"},
     "ultra": {"days": 30, "grant": "ultra", "rub": PRICES["ultra"][0], "stars": PRICES["ultra"][1],
-              "title": "Velora Ultra", "desc": "3M токенов в день, всё без ограничений"},
+              "title": "Velora Ultra", "desc": "350K токенов за период, видео, перерыв 10 минут, маскот Клод в подарок"},
     "pro_trial": {"days": 3, "grant": "pro", "rub": PRICES["pro_trial"][0], "stars": PRICES["pro_trial"][1],
                   "title": "Velora Pro · 3 дня", "desc": "Пробный Pro на 3 дня"},
 }
@@ -133,7 +137,7 @@ def product(key):
         return PLANS[key]
     if isinstance(key, str) and key.startswith("mascot:") and key[7:] in MASCOTS:
         n = MASCOTS[key[7:]]
-        return {"days": 0, "grant": "", "rub": PRICES["mascot"][0], "stars": PRICES["mascot"][1],
+        return {"days": 0, "grant": "", "rub": MASCOT_PRICES.get(key[7:], PRICES["mascot"])[0], "stars": MASCOT_PRICES.get(key[7:], PRICES["mascot"])[1],
                 "title": f"Маскот {n}", "desc": f"Маскот {n} для Velora, покупка навсегда"}
     return None
 
@@ -1072,7 +1076,8 @@ def shop_me():
     u = uid()
     sync_pending(u)
     m = product("mascot:murz")
-    return jsonify(owned=owned_items(u), eq=get_eq(u), price={"rub": m["rub"], "stars": m["stars"]})
+    return jsonify(owned=owned_items(u), eq=get_eq(u), price={"rub": m["rub"], "stars": m["stars"]},
+                   prices={k: {"rub": v[0], "stars": v[1]} for k, v in MASCOT_PRICES.items()})
 
 
 @app.post("/api/shop/equip")
