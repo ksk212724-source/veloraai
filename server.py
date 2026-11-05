@@ -11,7 +11,7 @@
   YOOKASSA_SECRET_KEY       секретный ключ ЮKassa. Только в переменных окружения, не в коде
   и ключ нейросети: GEMINI_API_KEY или OPENROUTER_API_KEY (или LLM_API_URL / LLM_API_KEY / LLM_MODEL)
 
-ЦЕНЫ: таблицы PRICES и MASCOT_PRICES в этом файле (подписки и маскоты от 50 до 150 ₽; ключ "mascot" это цена любого маскота из магазина).
+ЦЕНЫ: таблица PRICES в этом файле (сейчас везде 1 ₽ и 1 ⭐; ключ "mascot" это цена любого маскота из магазина).
 МАГАЗИН МАСКОТОВ: POST /api/pay {"item":"murz","method":"yookassa"|"stars"} создаёт платёж, GET /api/shop/me отдаёт купленных.
   Покупка записывается в таблицу owned только после подтверждения оплаты (вебхук ЮKassa / успешный платёж Stars).
 
@@ -20,7 +20,7 @@
 
 ОСТАЛЬНОЕ
   YOOKASSA_RECEIPT_EMAIL (только для ИП/ООО с чеками), YOOKASSA_RETURN_URL,
-  LLM_MAX_TOKENS (по умолчанию 60000), LLM_CONTINUES (авто-продолжение длинных ответов, по умолчанию 12), UNLIMITED (1 = выключить все лимиты; по умолчанию 0, лимиты задаёт таблица TIERS), BETA_PASSWORD (пароль входа), BETA_GATE,
+  LLM_MAX_TOKENS (по умолчанию 60000), LLM_CONTINUES (авто-продолжение длинных ответов, по умолчанию 12), UNLIMITED (1 = бета без лимитов), FREE_LIMIT, BETA_PASSWORD, BETA_GATE,
   POLLINATIONS_KEY, OR_*_MODEL, GEMINI_*, CF_ACCOUNT_ID / CF_API_TOKEN (голос), TTS_VOICE,
   USE_POLLING, MOCK, ALLOW_BROWSER, MEDIA_TTL_HOURS.
 В кабинете ЮKassa: Интеграция → HTTP-уведомления → WEBAPP_URL/api/yookassa/webhook, событие payment.succeeded.
@@ -97,45 +97,34 @@ PERSONA = (BASE / "persona.md").read_text(encoding="utf-8") if (BASE / "persona.
 
 BETA_PASSWORD = os.getenv("BETA_PASSWORD", "5050")
 BETA_GATE = os.getenv("BETA_GATE", "1") == "1"
-UNLIMITED = os.getenv("UNLIMITED", "0") == "1"   # 1 = выключить все лимиты (по умолчанию лимиты ВКЛЮЧЕНЫ)
-
-# ===================== ЛИМИТЫ ТАРИФОВ =====================
-# cap: токенов за период; brk: перерыв после лимита (секунд); photos: генераций фото за период (None = без лимита)
-TIERS = {
-    "free":  {"cap": 10000,  "brk": 5 * 3600, "photos": 3,    "video": False, "games": False},
-    "plus":  {"cap": 50000,  "brk": 2 * 3600, "photos": None, "video": False, "games": False},
-    "pro":   {"cap": 150000, "brk": 2 * 3600, "photos": None, "video": False, "games": True},
-    "ultra": {"cap": 350000, "brk": 10 * 60,  "photos": None, "video": True,  "games": True},
-}
-PERIOD = 24 * 3600   # если лимит не выбран, токены обновляются раз в сутки
+FREE = int(os.getenv("FREE_LIMIT", "10"))
+UNLIMITED = os.getenv("UNLIMITED", "1") == "1"
+WINDOW = 3 * 3600
 
 
 # ===================== ЦЕНЫ: меняются прямо здесь, в Render ничего вписывать не нужно =====================
 #            рубли  звёзды
-PRICES = {"plus":      (199, 100),
-          "pro":       (499, 250),
-          "ultra":     (999, 500),
-          "pro_trial": (49, 25),    # пробный Pro на 3 дня
-          "mascot":    (100, 50)}   # запасная цена маскота, если его нет в MASCOT_PRICES
-# цены маскотов: от 50 до 150 ₽ (звёзды примерно вдвое меньше)
-MASCOT_PRICES = {"murz": (50, 25), "boo": (70, 35), "orbit": (80, 40), "ten": (90, 45),
-                 "donut": (100, 50), "ogon": (110, 55), "kleshnya": (130, 65), "bit": (150, 75)}
+PRICES = {"plus":      (1, 1),
+          "pro":       (1, 1),
+          "ultra":     (1, 1),
+          "pro_trial": (1, 1),   # пробный Pro на 3 дня
+          "mascot":    (1, 1)}   # любой платный маскот из магазина (покупка навсегда)
 # ===========================================================================================================
 
 PLANS = {
     "plus": {"days": 30, "grant": "plus", "rub": PRICES["plus"][0], "stars": PRICES["plus"][1],
-             "title": "Velora Plus", "desc": "50K токенов, фото без лимита, перерыв 2 часа"},
+             "title": "Velora Plus", "desc": "600K токенов в день, фото без лимита, голос и проекты"},
     "pro": {"days": 30, "grant": "pro", "rub": PRICES["pro"][0], "stars": PRICES["pro"][1],
-            "title": "Velora Pro", "desc": "150K токенов, создание игр, перерыв 2 часа"},
+            "title": "Velora Pro", "desc": "1,5M токенов в день, видео из кода, глубокое исследование"},
     "ultra": {"days": 30, "grant": "ultra", "rub": PRICES["ultra"][0], "stars": PRICES["ultra"][1],
-              "title": "Velora Ultra", "desc": "350K токенов, видео, перерыв 10 минут, маскот Клод в подарок"},
+              "title": "Velora Ultra", "desc": "3M токенов в день, всё без ограничений"},
     "pro_trial": {"days": 3, "grant": "pro", "rub": PRICES["pro_trial"][0], "stars": PRICES["pro_trial"][1],
                   "title": "Velora Pro · 3 дня", "desc": "Пробный Pro на 3 дня"},
 }
 
 # Маскоты магазина: id совпадают с id в магазине приложения. silver и mint бесплатные, их тут нет.
 MASCOTS = {"murz": "Мурз", "orbit": "Орбит", "boo": "Бу", "ogon": "Огонёк",
-           "kleshnya": "Клешня", "bit": "Сэр Бит", "ten": "Тень", "donut": "Донат"}
+           "kleshnya": "Клешня", "bit": "Сэр Бит", "ten": "Тень", "donut": "Донат", "claude": "Клод"}
 
 
 def product(key):
@@ -144,8 +133,7 @@ def product(key):
         return PLANS[key]
     if isinstance(key, str) and key.startswith("mascot:") and key[7:] in MASCOTS:
         n = MASCOTS[key[7:]]
-        pr = MASCOT_PRICES.get(key[7:], PRICES["mascot"])
-        return {"days": 0, "grant": "", "rub": pr[0], "stars": pr[1],
+        return {"days": 0, "grant": "", "rub": PRICES["mascot"][0], "stars": PRICES["mascot"][1],
                 "title": f"Маскот {n}", "desc": f"Маскот {n} для Velora, покупка навсегда"}
     return None
 
@@ -198,14 +186,11 @@ create table if not exists users(uid text primary key, used int default 0, until
 create table if not exists pays(id text primary key, uid text, status text, t real);
 create table if not exists beta(uid text primary key);
 create table if not exists owned(uid text, item text, t real, primary key(uid, item));
+create table if not exists skinpref(uid text primary key, eq text, t real);
 create table if not exists promo_used(uid text, code text, t real, primary key(uid, code));
 """)
 for _sql in ("alter table users add column lk real default 0",
              "alter table users add column plan text default ''",
-             "alter table users add column tok int default 0",
-             "alter table users add column tday real default 0",
-             "alter table users add column brk real default 0",
-             "alter table users add column ph int default 0",
              "alter table pays add column plan text default ''",
              "alter table pays add column amount int default 0",
              "alter table pays add column method text default ''"):
@@ -291,86 +276,41 @@ def rate_limit(key: str, limit=20, per=3600):
 
 
 # ---------- лимиты и оплата ----------
-def cur_tier(u: str) -> str:
-    sb = sub_of(u)
-    return sb["plan"] if sb["active"] and sb["plan"] in TIERS else "free"
-
-
-def tstate(u: str):
-    """(тариф, токенов потрачено, конец перерыва или 0, фото за период). Сам снимает перерыв и обновляет период."""
-    t, now = cur_tier(u), time.time()
+def row(u: str):
+    """Возвращает (used, until, lk) и при необходимости запускает/снимает паузу."""
     with lock:
         db.execute("insert or ignore into users(uid) values(?)", (u,))
-        used, tday, brk, ph = db.execute("select tok, tday, brk, ph from users where uid=?", (u,)).fetchone()
-        used, tday, brk, ph = used or 0, tday or 0, brk or 0, ph or 0
-        if brk and now >= brk:  # перерыв прошёл: всё обновляется
-            used, ph, brk, tday = 0, 0, 0, now
-            db.execute("update users set tok=0, ph=0, brk=0, tday=? where uid=?", (now, u))
-        elif not brk and (not tday or now - tday > PERIOD):
-            used, ph, tday = 0, 0, now
-            db.execute("update users set tok=0, ph=0, tday=? where uid=?", (now, u))
         db.commit()
-    return t, used, brk, ph
+        used, until, lk = db.execute("select used, until, lk from users where uid=?", (u,)).fetchone()
+        now = time.time()
+        if used >= FREE and not lk:  # лимит кончился: пауза в 3 часа
+            lk = now + WINDOW
+            db.execute("update users set lk=? where uid=?", (lk, u))
+            db.commit()
+        if lk and now >= lk:  # пауза прошла: новые запросы
+            db.execute("update users set used=0, lk=0 where uid=?", (u,))
+            db.commit()
+            used, lk = 0, 0
+    return used, until, lk
 
 
-def gate(u: str, kind: str = "chat"):
-    """None, если можно; иначе (текст отказа). kind: chat | image | edit | video | game."""
+def spend(u: str) -> bool:
     if UNLIMITED:
-        return None
-    t, used, brk, ph = tstate(u)
-    T = TIERS[t]
-    if brk:
-        m = max(1, int((brk - time.time()) / 60) + 1)
-        return f"Лимит токенов исчерпан. Перерыв ещё {m // 60} ч {m % 60} мин" if m >= 60 else f"Лимит токенов исчерпан. Перерыв ещё {m} мин"
-    if kind == "video" and not T["video"]:
-        return "Создание видео доступно только в Ultra"
-    if kind == "game" and not T["games"]:
-        return "Создание игр доступно в Pro и Ultra"
-    if kind in ("image", "edit") and T["photos"] is not None and ph >= T["photos"]:
-        return f"В Free доступно {T['photos']} генерации фото за период. Без лимита фото в Plus и выше"
-    return None
-
-
-def charge(u: str, tokens: int = 0, photo: bool = False):
-    """Списывает токены; при исчерпании запускает перерыв по тарифу."""
-    if UNLIMITED:
-        return
-    t, used, brk, ph = tstate(u)
-    T = TIERS[t]
-    used = min(T["cap"], used + max(0, int(tokens)))
-    ph += 1 if photo else 0
-    if used >= T["cap"] - 150 and not brk:
-        brk = time.time() + T["brk"]
-    with lock:
-        db.execute("update users set tok=?, ph=?, brk=? where uid=?", (used, ph, brk, u))
-        db.commit()
-
-
-def media_cost(u: str, kind: str) -> int:
-    if kind == "video":
-        return 5000
-    return 1500 if cur_tier(u) == "free" else 0   # фото в Plus и выше не тратят токены
-
-
-BOT_DENY: dict = {}
-
-
-def spend(u: str, kind: str = "chat") -> bool:
-    """Для бота: проверка и списание одним вызовом."""
-    g = gate(u, kind)
-    if g:
-        BOT_DENY[u] = g
+        return True
+    used, until, _ = row(u)
+    if until > time.time():
+        return True
+    if used >= FREE:
         return False
-    charge(u, 400 if kind == "chat" else media_cost(u, kind), photo=kind in ("image", "edit"))
+    with lock:
+        db.execute("update users set used=used+1, lk=case when used+1>=? then ? else lk end where uid=?",
+                   (FREE, time.time() + WINDOW, u))
+        db.commit()
     return True
 
 
-def deny(msg: str):
-    return jsonify(error=msg, paywall=True), 402
-
-
-GAME_RE = re.compile(r"(созда|сдела|напиши|make|create|build|write).{0,25}(игр|game)", re.I)
-VIDEO_RE = re.compile(r"(созда|сдела|сними|сгенер|make|create|generate).{0,25}(видео|анимац|video|animation)", re.I)
+def paywall():
+    return jsonify(error="Бесплатные запросы закончились", paywall=True), 402
 
 
 def yk_creds_problem() -> str:
@@ -492,19 +432,35 @@ def grant(pid: str, u: str, plan: str, amount: int = 0, method: str = "") -> boo
     return True
 
 
+FREE_SKINS = ("silver", "mint")
+
+
+def get_eq(u: str) -> str:
+    """Какой маскот выбран у пользователя (хранится на сервере, переживает смену устройства)."""
+    with lock:
+        r = db.execute("select eq from skinpref where uid=?", (u,)).fetchone()
+    eq = r[0] if r else "silver"
+    return eq if eq in FREE_SKINS or eq in owned_items(u) else "silver"
+
+
+GIFT_ONLY = ("claude",)  # маскот Клод не продаётся: даётся с подпиской Ultra или по промокоду
+
+
 def owned_items(u: str) -> list:
     with lock:
-        items = [r[0] for r in db.execute("select item from owned where uid=?", (u,)).fetchall()]
-    if UNLIMITED or cur_tier(u) == "ultra":   # маскот Клод идёт в подарок с подпиской Ultra
-        if "claude" not in items:
-            items.append("claude")
-    return items
+        out = [r[0] for r in db.execute("select item from owned where uid=?", (u,)).fetchall()]
+    s = sub_of(u)  # Клод идёт в подарок, пока активна подписка Ultra
+    if s["active"] and s["plan"] == "ultra" and "claude" not in out:
+        out.append("claude")
+    return out
 
 
 def purchase_blocked(u: str, plan: str) -> str:
     """Пустая строка, если покупать можно; иначе причина."""
     if plan == "pro_trial":
         return trial_blocked(u)
+    if plan.startswith("mascot:") and plan[7:] in GIFT_ONLY:
+        return "Этот маскот даётся с подпиской Ultra или по промокоду"
     if plan.startswith("mascot:") and plan[7:] in owned_items(u):
         return "Этот маскот уже куплен"
     return ""
@@ -927,11 +883,9 @@ def generate():
         except Exception:  # noqa: BLE001
             return jsonify(error="Не удалось прочитать фото"), 400
     u = uid()
-    tickets.pop(body.get("ticket"), None)  # картинка, которую Velora рисует сама по ходу чата
-    g = gate(u, kind)  # видео только Ultra, у Free 3 фото, перерыв блокирует всё
-    if g:
-        return deny(g)
-    charge(u, media_cost(u, kind), photo=kind in ("image", "edit"))
+    tk = tickets.pop(body.get("ticket"), None)  # картинка, которую Velora рисует сама по ходу чата
+    if not (tk and tk[0] == u and tk[1] > time.time()) and not spend(u):
+        return paywall()
     jid = uuid.uuid4().hex[:12]
     jobs[jid] = {"status": "working", "t": time.time()}
     opts = {k: body.get(k) for k in ("style", "aspect", "duration", "seed")}
@@ -1050,14 +1004,9 @@ def chat():
     while msgs and msgs[0]["role"] != "user":  # некоторые нейросети требуют начинать с пользователя
         msgs.pop(0)
     u = uid()
+    if not spend(u):
+        return paywall()
     text0 = msgs[-1]["content"]
-    g = gate(u, "chat")
-    if not g and GAME_RE.search(text0):
-        g = gate(u, "game")
-    if not g and VIDEO_RE.search(text0):
-        g = gate(u, "video")
-    if g:
-        return deny(g)
     image = body.get("image")
     if isinstance(image, str) and image.startswith("data:image/") and len(image) < 4_000_000:
         msgs[-1]["content"] = [{"type": "text", "text": text0},
@@ -1066,7 +1015,6 @@ def chat():
         image = None
 
     def done(reply):
-        charge(u, int((len(text0) + len(reply)) / 3) + (800 if image else 0))
         out = {"reply": reply}
         if re.search(r"\[\[(image|video):", reply, re.I):
             t = uuid.uuid4().hex
@@ -1119,13 +1067,65 @@ def sync_pending(u: str):
 
 @app.get("/api/shop/me")
 def shop_me():
-    """Магазин: какие маскоты куплены (источник правды: сервер) и сколько стоит каждый."""
+    """Магазин: какие маскоты куплены (источник правды: сервер) и сколько стоит маскот."""
     check_access()
     u = uid()
     sync_pending(u)
-    prices = {k: {"rub": v[0], "stars": v[1]} for k, v in MASCOT_PRICES.items()}
-    return jsonify(owned=owned_items(u), prices=prices,
-                   price={"rub": PRICES["mascot"][0], "stars": PRICES["mascot"][1]})
+    m = product("mascot:murz")
+    return jsonify(owned=owned_items(u), eq=get_eq(u), price={"rub": m["rub"], "stars": m["stars"]})
+
+
+@app.post("/api/shop/equip")
+def shop_equip():
+    """Запоминает выбранного маскота на сервере (только бесплатного или уже купленного)."""
+    check_access()
+    u = uid()
+    mid = str((request.get_json(silent=True) or {}).get("id") or "")
+    if mid not in FREE_SKINS and mid not in owned_items(u):
+        return jsonify(error="Этот маскот ещё не куплен"), 403
+    with lock:
+        db.execute("insert into skinpref(uid,eq,t) values(?,?,?) on conflict(uid) do update set eq=excluded.eq, t=excluded.t",
+                   (u, mid, time.time()))
+        db.commit()
+    return jsonify(eq=mid)
+
+
+
+# ===================== ПРОМОКОДЫ: добавляй новые строки сюда =====================
+#   mascots: список id маскотов или "all"; plan/days: выдать подписку на столько дней; msg: что показать
+_ALL_SKINS = list(MASCOTS)
+PROMOS = {}
+for _c in ("клод", "claude"):
+    PROMOS[_c] = {"mascots": ["claude"], "msg": "Клод теперь с вами. Выберите его в магазине"}
+for _c in ("ультра1", "ultra1"):
+    PROMOS[_c] = {"plan": "ultra", "days": 30, "msg": "Ultra на 30 дней активирована"}
+for _c in ("маями", "miami"):
+    PROMOS[_c] = {"mascots": "all", "plan": "ultra", "days": 3650, "msg": "Открыто всё: Ultra и все маскоты"}
+
+
+@app.post("/api/promo")
+def promo_apply():
+    check_access()
+    rate_limit(client_ip(), limit=30, per=3600)
+    u = uid()
+    code = str((request.get_json(silent=True) or {}).get("code") or "").strip().lower()
+    p = PROMOS.get(code)
+    if not p:
+        return jsonify(error="Такого промокода нет"), 404
+    with lock:
+        if db.execute("select 1 from promo_used where uid=? and code=?", (u, code)).fetchone():
+            return jsonify(error="Вы уже активировали этот промокод"), 409
+        db.execute("insert into promo_used(uid,code,t) values(?,?,?)", (u, code, time.time()))
+        items = _ALL_SKINS if p.get("mascots") == "all" else (p.get("mascots") or [])
+        for it in items:
+            db.execute("insert or ignore into owned(uid,item,t) values(?,?,?)", (u, it, time.time()))
+        if p.get("plan"):
+            db.execute("insert or ignore into users(uid) values(?)", (u,))
+            until = db.execute("select until from users where uid=?", (u,)).fetchone()[0] or 0
+            db.execute("update users set until=?, plan=? where uid=?",
+                       (max(time.time(), until) + p.get("days", 30) * 86400, p["plan"], u))
+        db.commit()
+    return jsonify(ok=True, msg=p["msg"])
 
 
 @app.get("/api/me")
@@ -1133,53 +1133,12 @@ def me():
     check_access()
     u = uid()
     sync_pending(u)
-    t, used, brk, ph = tstate(u)
-    T = TIERS[t]
+    used, _, lk = row(u)
     s = sub_of(u)
-    limits = {"tier": t, "cap": T["cap"], "used": min(used, T["cap"]), "brk": int(brk), "photos": ph,
-              "photo_cap": T["photos"], "video": T["video"], "games": T["games"]}
-    return jsonify(free_total=T["cap"], used=min(used, T["cap"]), beta=UNLIMITED, active=UNLIMITED or s["active"],
-                   paid=s["active"], plan=s["plan"], sub_until=s["sub_until"], price=PLANS["plus"]["rub"], reset=int(brk),
-                   limits=limits,
+    return jsonify(free_total=FREE, used=min(used, FREE), beta=UNLIMITED, active=UNLIMITED or s["active"],
+                   paid=s["active"], plan=s["plan"], sub_until=s["sub_until"], price=PLANS["plus"]["rub"], reset=lk,
                    prices={k: {"rub": v["rub"], "stars": v["stars"]} for k, v in PLANS.items()},
                    mascot_price={"rub": PRICES["mascot"][0], "stars": PRICES["mascot"][1]})
-
-
-# ---------- промокоды ----------
-# маями: максимум: Ultra на 10 лет + все маскоты; ультра1: Ultra на 30 дней (один раз на человека)
-PROMOS = {
-    "маями":   {"days": 3650, "all": True, "once": False, "msg": "Промокод принят: Ultra и все маскоты ваши"},
-    "ультра1": {"days": 30, "all": False, "once": True, "msg": "Промокод принят: Ultra на 30 дней, маскот Клод в подарок"},
-}
-
-
-def norm_code(raw: str) -> str:
-    return re.sub(r"[\s\-_.]+", "", raw.translate(_INVIS)).lower().replace("ё", "е")
-
-
-@app.post("/api/promo")
-def promo():
-    check_access()
-    u = uid()
-    rate_limit("promo:" + u, limit=10, per=600)
-    code = norm_code(str((request.get_json(silent=True) or {}).get("code", "")))
-    p = PROMOS.get(code)
-    if not p:
-        return jsonify(ok=False, error="Неверный промокод"), 400
-    now = time.time()
-    with lock:
-        if p["once"] and db.execute("select 1 from promo_used where uid=? and code=?", (u, code)).fetchone():
-            return jsonify(ok=False, error="Этот промокод вы уже использовали"), 400
-        db.execute("insert or ignore into users(uid) values(?)", (u,))
-        until = db.execute("select until from users where uid=?", (u,)).fetchone()[0] or 0
-        new_until = max(until, now + p["days"] * 86400) if not p["once"] else max(until, now) + p["days"] * 86400
-        db.execute("update users set until=?, plan='ultra' where uid=?", (new_until, u))
-        if p["all"]:
-            for k in MASCOTS:
-                db.execute("insert or ignore into owned(uid,item,t) values(?,?,?)", (u, k, now))
-        db.execute("insert or ignore into promo_used(uid,code,t) values(?,?,?)", (u, code, now))
-        db.commit()
-    return jsonify(ok=True, msg=p["msg"], plan="ultra", sub_until=int(new_until))
 
 
 def stars_pay(u: str, plan: str):
@@ -1338,7 +1297,9 @@ def yk_check():
 @app.get("/health")
 def health():
     return jsonify(ok=True, yookassa=bool(YK_SHOP and YK_KEY), stars=bool(BOT_TOKEN),
-                   llm=bool(GEMINI_KEY or OR_KEY or LLM_API_URL), bot=bool(BOT_TOKEN and WEBAPP_URL))
+                   llm=bool(GEMINI_KEY or OR_KEY or LLM_API_URL), bot=bool(BOT_TOKEN and WEBAPP_URL),
+                   keys=dict(gemini=bool(GEMINI_KEY), openrouter=bool(OR_KEY), pollinations=bool(POLL_KEY),
+                             llm_url=bool(LLM_API_URL)), db=DB_PATH, mock=MOCK)
 
 
 # ---------- бот ----------
@@ -1433,7 +1394,7 @@ def handle_update(u: dict):
                                                         message_id=mid)).start()
 
     def need_pay():
-        say((BOT_DENY.pop(who, "") or "Лимит исчерпан") + ". Тарифы и промокоды: в приложении Velora.",
+        say("Бесплатные запросы закончились. Они обновятся через 3 часа, а подписка в Velora снимает лимит.",
             reply_markup=app_button())
 
     try:
@@ -1454,7 +1415,7 @@ def handle_update(u: dict):
             if cmd == "/edit" and not arg:
                 say("Добавьте описание: что изменить на фото.")
                 return
-            if not spend(who, "edit" if cmd == "/edit" else "chat"):
+            if not spend(who):
                 need_pay()
                 return
             pick = next((p for p in reversed(photos) if p.get("file_size", 0) <= 3_000_000), photos[0])
@@ -1476,10 +1437,10 @@ def handle_update(u: dict):
             if len(arg) < 2:
                 say("Добавьте описание, например: /img рассвет над горами")
                 return
-            kind = "video" if cmd == "/video" else "image"
-            if not spend(who, kind):
+            if not spend(who):
                 need_pay()
                 return
+            kind = "video" if cmd == "/video" else "image"
             tg("sendChatAction", chat_id=chat_id, action="upload_video" if kind == "video" else "upload_photo")
             send_media(chat_id, kind, arg[:600])
             return
@@ -1490,10 +1451,7 @@ def handle_update(u: dict):
             if cmd:
                 say(HELP, reply_markup=app_button())
             return
-        if GAME_RE.search(text) and not spend(who, "game"):
-            need_pay()
-            return
-        if not spend(who, "chat"):
+        if not spend(who):
             need_pay()
             return
         tg("sendChatAction", chat_id=chat_id, action="typing")
@@ -1579,13 +1537,13 @@ def startup_report():
     if all(v["rub"] == 1 for v in PLANS.values()) or all(v["stars"] == 1 for v in PLANS.values()):
         w.append("ТЕСТОВЫЕ ЦЕНЫ: везде 1 ₽ / 1 ⭐. Перед релизом поменяйте таблицу PRICES в начале server.py")
     if BETA_GATE and BETA_PASSWORD == "5050" and not os.getenv("BETA_PASSWORD"):
-        w.append("пароль входа по умолчанию 5050: задайте BETA_PASSWORD")
+        w.append("пароль беты по умолчанию 5050: задайте BETA_PASSWORD")
     if not (YK_SHOP and YK_KEY):
         w.append("ЮKassa не подключена: нет YOOKASSA_SHOP_ID / YOOKASSA_SECRET_KEY")
     if not (GEMINI_KEY or OR_KEY or LLM_API_URL):
         w.append("нет ключа нейросети: чат пойдёт через бесплатный Pollinations, он нестабилен")
     if UNLIMITED:
-        w.append("UNLIMITED=1: ВСЕ лимиты выключены. Уберите эту переменную, чтобы лимиты работали")
+        w.append("UNLIMITED=1: лимиты сняты для всех (это режим беты)")
     for x in w:
         print("!!!", x)
 
