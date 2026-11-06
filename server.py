@@ -65,6 +65,7 @@ def glue(a: str, b: str) -> str:
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 WEBAPP_URL = (os.getenv("WEBAPP_URL") or os.getenv("RENDER_EXTERNAL_URL") or "").rstrip("/")
+BUSY_MSG = "Сервер временно недоступен. Попробуйте чуть позже"
 POLL_KEY = os.getenv("POLLINATIONS_KEY", "")
 MOCK = os.getenv("MOCK") == "1"
 ALLOW_BROWSER = os.getenv("ALLOW_BROWSER") == "1" or MOCK
@@ -96,9 +97,9 @@ PERSONA = (BASE / "persona.md").read_text(encoding="utf-8") if (BASE / "persona.
     else "Ты Velora, дружелюбная ИИ-помощница. Отвечай по-русски, коротко и по делу."
 
 BETA_PASSWORD = os.getenv("BETA_PASSWORD", "5050")
-BETA_GATE = os.getenv("BETA_GATE", "1") == "1"
+BETA_GATE = os.getenv("BETA_GATE", "0") == "1"  # бета закончилась: пароль не нужен (BETA_GATE=1 вернёт)
 FREE = int(os.getenv("FREE_LIMIT", "10"))
-UNLIMITED = os.getenv("UNLIMITED", "1") == "1"
+UNLIMITED = os.getenv("UNLIMITED", "0") == "1"  # бета закончилась: лимиты по тарифам (UNLIMITED=1 снимет их)
 WINDOW = 3 * 3600
 
 
@@ -672,7 +673,7 @@ def gemini_chat(msgs, system, max_tokens) -> str:
     return out.strip()
 
 
-def ask_llm(msgs, system=None, max_tokens=700) -> str:
+def _ask_llm(msgs, system=None, max_tokens=700) -> str:
     """Сначала Google (если есть ключ), затем OpenRouter, ваш API, бесплатный Pollinations."""
     if GEMINI_KEY:
         try:
@@ -733,6 +734,19 @@ def ask_llm(msgs, system=None, max_tokens=700) -> str:
             print("LLM", url.split("/")[2], type(e).__name__, str(e)[:200])
             last = f"{url.split('/')[2]} {type(e).__name__}"
     raise RuntimeError(str(last) if last else "пустой ответ")
+
+
+_PROVIDER = re.compile(r"pollinations|gemma|openrouter|generativelanguage|google ai", re.I)
+_LIMITMSG = re.compile(r"limit|quota|credit|balance|upgrade|deprecat|exhaust|exceed|tier|token|лимит|исчерп", re.I)
+
+
+def ask_llm(msgs, system=None, max_tokens=700) -> str:
+    """Ответ нейросети. Если провайдер вместо ответа прислал служебное сообщение о лимитах (Gemma, Pollinations и т. п.), считаем это сбоем."""
+    txt = _ask_llm(msgs, system, max_tokens)
+    if len(txt) < 500 and _PROVIDER.search(txt) and _LIMITMSG.search(txt):
+        print("LLM: служебное сообщение провайдера вместо ответа:", txt[:200])
+        raise RuntimeError("provider notice")
+    return txt
 
 
 # ---------- генерация ----------
@@ -898,7 +912,8 @@ def run_job(jid: str, kind: str, prompt: str, opts: dict):
         jobs[jid].update(status="done", url=f"/media/{path.name}",
                          kind="video" if kind == "video" else "image")
     except Exception as e:  # noqa: BLE001
-        jobs[jid].update(status="error", error=str(e)[:200])
+        print("JOB", kind, type(e).__name__, str(e)[:300])  # подробности только в логе сервера
+        jobs[jid].update(status="error", error=BUSY_MSG)
 
 
 # ---------- маршруты ----------
@@ -996,7 +1011,8 @@ def stt():
     audio = body.get("audio") or ""
     mime = (body.get("mime") or "audio/webm").split(";")[0]
     if not (CF_ACCOUNT and CF_TOKEN) and not GEMINI_KEY:
-        return jsonify(error="Для голоса добавьте CF_ACCOUNT_ID и CF_API_TOKEN"), 503
+        print("STT: нет ключей CF_ACCOUNT_ID / CF_API_TOKEN / GEMINI_API_KEY")
+        return jsonify(error=BUSY_MSG), 503
     if not audio or len(audio) > 6_000_000:
         return jsonify(error="Запись слишком длинная или пустая"), 400
     attempts = []
@@ -1009,7 +1025,7 @@ def stt():
             return jsonify(text=fn())
         except Exception as e:  # noqa: BLE001
             print("STT", name, type(e).__name__, str(e)[:300])
-    return jsonify(error="Не удалось распознать речь"), 502
+    return jsonify(error=BUSY_MSG), 503
 
 
 @app.post("/api/tts")
@@ -1081,7 +1097,8 @@ def chat():
                             + prof if prof else "")
         return done(ask_llm(msgs, system=system, max_tokens=LLM_MAX))
     except Exception as e:  # noqa: BLE001
-        return jsonify(error=f"Нейросеть не ответила ({e})"), 502
+        print("CHAT", type(e).__name__, str(e)[:300])  # подробности только в логе сервера
+        return jsonify(error=BUSY_MSG), 503
 
 
 @app.post("/api/unlock")
