@@ -108,11 +108,11 @@ PRICES = {"plus":      (49, 39),
           "pro":       (149, 130),
           "ultra":     (349, 290),
           "pro_trial": (29, 25),   # пробный Pro на 3 дня
-          "mascot":    (49, 40)}    # маскот, которого нет в MASCOT_PRICES
+          "mascot":    (50, 40)}    # маскот, которого нет в MASCOT_PRICES
 
 # цены маскотов (рубли, звёзды), покупка навсегда
-MASCOT_PRICES = {"boo": (29, 25), "murz": (39, 32), "donut": (49, 40), "ten": (59, 48),
-                 "orbit": (69, 55), "kleshnya": (79, 63), "ogon": (89, 71), "bit": (99, 80)}
+MASCOT_PRICES = {"boo": (50, 40), "murz": (60, 48), "donut": (70, 56), "ten": (80, 64),
+                 "orbit": (90, 72), "kleshnya": (100, 80), "ogon": (120, 96), "bit": (150, 120)}
 # ===========================================================================================================
 
 PLANS = {
@@ -202,6 +202,10 @@ for _sql in ("alter table users add column lk real default 0",
              "alter table users add column plan text default ''",
              "alter table users add column frozen_left real default 0",
              "alter table users add column frozen_plan text default ''",
+             "alter table users add column seen real default 0",
+             "alter table users add column reg real default 0",
+             "alter table users add column uname text default ''",
+             "alter table users add column fname text default ''",
              "alter table pays add column plan text default ''",
              "alter table pays add column amount int default 0",
              "alter table pays add column method text default ''"):
@@ -263,15 +267,43 @@ def check_access(gate=True):
         return
     if not BOT_TOKEN or not valid_init_data(request.headers.get("X-Init-Data", "")):
         abort(403)
+    touch_user(uid())
     _b = ban_of(uid())
     if _b is not None:
-        abort(make_response(jsonify(error="Аккаунт заблокирован" + (f". Причина: {_b}" if _b else ""), banned=True), 403))
+        abort(make_response(jsonify(error="Аккаунт заблокирован" + (f". Причина: {_b}" if _b else ""), banned=True, reason=_b), 403))
     if not sub_ok_uid(uid()):
         abort(make_response(jsonify(error="Подпишитесь на канал, чтобы пользоваться Velora", need_sub=True, channel=CHANNEL_URL), 403))
     if gate and BETA_GATE:  # при каждом открытии мини-приложения пароль вводится заново
         s = sessions.get(request.headers.get("X-Sess", ""))
         if not s or s[1] < time.time() or s[0] != uid():
             abort(401)
+
+
+_touched: dict = {}
+
+
+def touch_tg(tid: int, uname: str = "", fname: str = ""):
+    """Запоминает профиль и время последнего визита: из этого строится список пользователей в админке."""
+    u, now = f"tg:{tid}", time.time()
+    if now - _touched.get(u, 0) < 30:
+        return
+    _touched[u] = now
+    with lock:
+        db.execute("insert or ignore into users(uid) values(?)", (u,))
+        db.execute("update users set seen=?, reg=case when reg>0 then reg else ? end, "
+                   "uname=case when ?<>'' then ? else uname end, fname=case when ?<>'' then ? else fname end where uid=?",
+                   (now, now, uname, uname, fname, fname, u))
+        db.commit()
+
+
+def touch_user(u: str):
+    if not u.startswith("tg:"):
+        return
+    try:
+        usr = json.loads(dict(urllib.parse.parse_qsl(request.headers.get("X-Init-Data", ""))).get("user", "{}"))
+        touch_tg(int(u[3:]), (usr.get("username") or "")[:40], (usr.get("first_name") or "")[:40])
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def client_ip() -> str:
@@ -1418,26 +1450,45 @@ def db_promo(code: str):
 # ---------- обязательная подписка на канал ----------
 # REQUIRED_CHANNEL=@имя_канала (или -100... для приватного; тогда ещё CHANNEL_URL=https://t.me/+ссылка).
 # Бот должен быть администратором канала, иначе Telegram не даёт проверить подписку.
-REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "").strip()
+def _norm_channel(v: str) -> str:
+    """@имя, t.me/имя, https://t.me/имя и просто имя превращаем в @имя; числовой id (-100...) оставляем."""
+    v = v.strip()
+    v = re.sub(r"^(https?://)?(www\.)?t\.me/", "", v).strip("/ ")
+    if not v or re.fullmatch(r"-?\d+", v):
+        return v
+    return v if v.startswith("@") else "@" + v
+
+
+REQUIRED_CHANNEL = _norm_channel(os.getenv("REQUIRED_CHANNEL", ""))
 CHANNEL_URL = os.getenv("CHANNEL_URL", "").strip() or (
     "https://t.me/" + REQUIRED_CHANNEL.lstrip("@") if REQUIRED_CHANNEL.startswith("@") else "")
+# Строгий режим: если Telegram не смог проверить подписку (бот не админ канала, неверное имя канала), доступ закрыт.
+# SUB_FAIL_OPEN=1 вернёт старое поведение «при сбое пускать всех». ADMIN_SKIP_SUB=1: админы из ADMIN_IDS подписку не проверяют.
+SUB_FAIL_OPEN = os.getenv("SUB_FAIL_OPEN") == "1"
+ADMIN_SKIP_SUB = os.getenv("ADMIN_SKIP_SUB") == "1"
 _sub_cache: dict = {}
 
 
 def is_subscribed(tid: int, fresh: bool = False) -> bool:
-    if not REQUIRED_CHANNEL or tid in ADMIN_IDS:
+    if not REQUIRED_CHANNEL:
+        return True
+    if ADMIN_SKIP_SUB and tid in ADMIN_IDS:
         return True
     c = _sub_cache.get(tid)
-    if c and not fresh and time.time() - c[1] < (300 if c[0] else 15):
+    if c and not fresh and time.time() - c[1] < (120 if c[0] else 10):
         return c[0]
     try:
         r = tg("getChatMember", chat_id=REQUIRED_CHANNEL, user_id=tid)
     except Exception as e:  # noqa: BLE001
         print("подписка: сеть", type(e).__name__)
-        return True  # сбой проверки не должен блокировать всех
-    if not r.get("ok"):
-        print("подписка: Telegram не дал проверить (бот не админ канала?):", str(r.get("description", ""))[:150])
-        return True
+        r = None
+    if not r or not r.get("ok"):
+        if r:
+            print("подписка: Telegram не дал проверить (бот не админ канала? неверный REQUIRED_CHANNEL?):",
+                  str(r.get("description", ""))[:150])
+        if c and c[0] and time.time() - c[1] < 3600:  # короткий сбой сети: подтверждённых недавно не выкидываем
+            return True
+        return SUB_FAIL_OPEN
     m = r.get("result") or {}
     ok = m.get("status") in ("creator", "administrator", "member") or (m.get("status") == "restricted" and bool(m.get("is_member")))
     _sub_cache[tid] = (ok, time.time())
@@ -1462,7 +1513,47 @@ def sub_status():
         return jsonify(required=False, ok=True, channel="")
     if not BOT_TOKEN or not valid_init_data(request.headers.get("X-Init-Data", "")):
         abort(403)
-    return jsonify(required=bool(REQUIRED_CHANNEL), ok=sub_ok_uid(uid(), True), channel=CHANNEL_URL)
+    touch_user(uid())
+    _b = ban_of(uid())
+    return jsonify(required=bool(REQUIRED_CHANNEL), ok=sub_ok_uid(uid(), True), channel=CHANNEL_URL,
+                   banned=_b is not None, reason=_b or "")
+
+
+def sub_diag(chat_id, mid, frm):
+    out = ["Диагностика подписки на канал", ""]
+    if not REQUIRED_CHANNEL:
+        out += ["❌ Переменная REQUIRED_CHANNEL не задана на сервере.",
+                "Добавьте в Render: REQUIRED_CHANNEL=@имя_канала и перезапустите сервис."]
+    else:
+        out.append(f"Канал: {REQUIRED_CHANNEL}")
+        out.append("Ссылка: " + (CHANNEL_URL or "нет (задайте CHANNEL_URL, иначе кнопки «Подписаться» не будет)"))
+        try:
+            me = tg("getMe").get("result") or {}
+            r = tg("getChatMember", chat_id=REQUIRED_CHANNEL, user_id=me.get("id"))
+            st = (r.get("result") or {}).get("status")
+            if st in ("administrator", "creator"):
+                out.append("✅ Бот администратор канала")
+            elif r.get("ok"):
+                out.append(f"❌ Бот в канале, но не админ (статус: {st}). Сделайте его администратором")
+            else:
+                out.append("❌ Telegram не видит канал или бота в нём: " + str(r.get("description", ""))[:120])
+                out.append("Проверьте имя канала в REQUIRED_CHANNEL и добавьте бота админом")
+            r2 = tg("getChatMember", chat_id=REQUIRED_CHANNEL, user_id=frm)
+            out.append(f"Ваш статус в канале: {(r2.get('result') or {}).get('status') or r2.get('description')}")
+        except Exception as e:  # noqa: BLE001
+            r2 = {}
+            out.append("Ошибка проверки: " + type(e).__name__)
+        out.append("")
+        st_me = (r2.get("result") or {}).get("status")
+        if st_me in ("creator", "administrator"):
+            out.append("Вы создатель/админ канала: Telegram считает вас подписанным, окно подписки вам не покажется. "
+                       "Проверяйте с другого аккаунта.")
+        elif ADMIN_SKIP_SUB and frm in ADMIN_IDS:
+            out.append("Включён ADMIN_SKIP_SUB: админы из ADMIN_IDS подписку не проверяют.")
+        else:
+            out.append("Для вас окно подписки работает как у всех.")
+        out.append("Режим при сбое проверки: " + ("пускать всех (SUB_FAIL_OPEN=1)" if SUB_FAIL_OPEN else "строгий, без подтверждённой подписки не пускать"))
+    adm_show(chat_id, mid, "\n".join(out), [[_b("Обновить", "a:sc")]] + BACK)
 
 
 def sub_callback(cq: dict):
@@ -1552,9 +1643,10 @@ BACK = [[_b("« Меню", "a:m")]]
 def adm_menu(chat_id, mid=None):
     adm_state.pop(chat_id, None)
     adm_show(chat_id, mid, "Админка Velora", [
-        [_b("📊 Статистика", "a:s"), _b("👤 Пользователи", "a:u")],
+        [_b("📊 Статистика", "a:s"), _b("👤 Пользователи", "a:ul:0")],
         [_b("🎟 Промокоды", "a:p"), _b("💰 Цены", "a:r")],
-        [_b("📣 Рассылка", "a:b"), _b("🚫 Баны", "a:bl")]])
+        [_b("📣 Рассылка", "a:b"), _b("🚫 Баны", "a:bl")],
+        [_b("📢 Проверка подписки", "a:sc")]])
 
 
 def adm_stats(chat_id, mid):
@@ -1564,6 +1656,9 @@ def adm_stats(chat_id, mid):
         subs = db.execute("select plan, count(*) from users where until>? group by plan", (now,)).fetchall()
         n_frozen = db.execute("select count(*) from users where frozen_left>0").fetchone()[0]
         n_bans = db.execute("select count(*) from bans").fetchone()[0]
+        on5 = db.execute("select count(*) from users where seen>?", (now - 300,)).fetchone()[0]
+        d1 = db.execute("select count(*) from users where seen>?", (now - 86400,)).fetchone()[0]
+        new1 = db.execute("select count(*) from users where reg>?", (now - 86400,)).fetchone()[0]
         rev = {}
         for name, since in (("за 24 часа", now - 86400), ("за 7 дней", now - 7 * 86400),
                             ("за 30 дней", now - 30 * 86400), ("всего", 0)):
@@ -1571,7 +1666,7 @@ def adm_stats(chat_id, mid):
                                    "where status='paid' and t>=? group by method", (since,)).fetchall()
         last = db.execute("select t, uid, plan, amount, method from pays where status='paid' "
                           "order by t desc limit 8").fetchall()
-    out = [f"Пользователей в базе: {n_users}",
+    out = [f"Пользователей в базе: {n_users} (онлайн 5 мин: {on5}, за 24 ч: {d1}, новых за 24 ч: {new1})",
            "Активные подписки: " + (", ".join(f"{PLAN_NAMES.get(p, p)} {c}" for p, c in subs) or "нет"),
            f"Заморожено: {n_frozen}, забанено: {n_bans}", "",
            "Выручка:"]
@@ -1587,15 +1682,79 @@ def adm_stats(chat_id, mid):
     adm_show(chat_id, mid, "\n".join(out), [[_b("Обновить", "a:s")]] + BACK)
 
 
+def _ago(t) -> str:
+    if not t:
+        return "давно"
+    d = max(0, time.time() - t)
+    return "только что" if d < 90 else f"{int(d // 60)} мин назад" if d < 3600 else f"{int(d // 3600)} ч назад" if d < 86400 else f"{int(d // 86400)} дн назад"
+
+
+def _who(uname, fname, tid) -> str:
+    return (f"@{uname}" if uname else (fname or "")) or str(tid)
+
+
+def user_list(chat_id, mid, page: int = 0):
+    now = time.time()
+    per = 8
+    with lock:
+        n = db.execute("select count(*) from users where uid like 'tg:%'").fetchone()[0]
+        on5 = db.execute("select count(*) from users where seen>?", (now - 300,)).fetchone()[0]
+        d1 = db.execute("select count(*) from users where seen>?", (now - 86400,)).fetchone()[0]
+        new1 = db.execute("select count(*) from users where reg>?", (now - 86400,)).fetchone()[0]
+        rows = db.execute("select uid, uname, fname, seen, until, plan from users where uid like 'tg:%' "
+                          "order by seen desc, rowid desc limit ? offset ?", (per, page * per)).fetchall()
+    out = [f"Пользователей: {n}", f"Онлайн (5 мин): {on5} · за 24 ч: {d1} · новых за 24 ч: {new1}",
+           f"Страница {page + 1} из {max(1, -(-n // per))}. Обновляется при каждом нажатии «Обновить»", ""]
+    kb = []
+    for u, un, fn, seen, until, plan in rows:
+        tid = u[3:]
+        dot = "🟢" if seen and now - seen < 300 else ("🟡" if seen and now - seen < 86400 else "⚪")
+        tag = (" · " + PLAN_NAMES.get(plan, plan)) if (until or 0) > now and plan else ""
+        ban = " 🚫" if ban_of(u) is not None else ""
+        out.append(f"{dot} {_who(un, fn, tid)} · {tid} · {_ago(seen)}{tag}{ban}")
+        kb.append([_b(f"{dot} {_who(un, fn, tid)}{tag}{ban}", f"a:uc:{tid}")])
+    if not rows:
+        out.append("пока никого")
+    nav = []
+    if page > 0:
+        nav.append(_b("‹ Назад", f"a:ul:{page - 1}"))
+    nav.append(_b("🔄 Обновить", f"a:ul:{page}"))
+    if (page + 1) * per < n:
+        nav.append(_b("Вперёд ›", f"a:ul:{page + 1}"))
+    adm_show(chat_id, mid, "\n".join(out), kb + [nav, [_b("🔍 Найти по ID или @нику", "a:u")]] + BACK)
+
+
+def user_find(chat_id, text: str):
+    q = text.strip()
+    m = re.search(r"\d{5,}", q)
+    if m:
+        return user_card(chat_id, None, int(m.group()))
+    like = q.lstrip("@").lower()
+    with lock:
+        rows = db.execute("select uid, uname, fname from users where uid like 'tg:%' and "
+                          "(lower(uname)=? or lower(uname) like ? or lower(fname) like ?) order by seen desc limit 8",
+                          (like, like + "%", "%" + like + "%")).fetchall()
+    if len(rows) == 1:
+        return user_card(chat_id, None, int(rows[0][0][3:]))
+    if not rows:
+        tg("sendMessage", chat_id=chat_id, text="Никого не нашёл. Пришлите числовой ID или @ник того, кто открывал приложение. Или /cancel")
+        adm_state[chat_id] = {"act": "user"}
+        return
+    adm_show(chat_id, None, f"Нашлось {len(rows)}:", [[_b(f"{_who(un, fn, u[3:])} · {u[3:]}", f"a:uc:{u[3:]}")] for u, un, fn in rows] + BACK)
+
+
 def user_card(chat_id, mid, tid: int, note: str = ""):
     u = f"tg:{tid}"
     s = sub_of(u)
     with lock:
         seen = db.execute("select 1 from users where uid=?", (u,)).fetchone()
+        prof = db.execute("select uname, fname, seen, reg from users where uid=?", (u,)).fetchone() or ("", "", 0, 0)
         paid = db.execute("select count(*), coalesce(sum(amount),0) from pays where uid=? and status='paid'", (u,)).fetchone()
     own = [MASCOTS.get(i, i) for i in owned_items(u)]
     ban, fz = ban_of(u), frozen_left(u)
     txt = ((note + "\n\n") if note else "") + (f"Пользователь {tid}" + ("" if seen else " (в базе пока нет)") + "\n"
+           + (f"Имя: {prof[1] or '-'}  Ник: {('@' + prof[0]) if prof[0] else '-'}\n" if seen else "")
+           + (f"Был: {_ago(prof[2])} · с нами с {_fmt_t(prof[3])}\n" if prof[2] else "") +
            f"Подписка: {PLAN_NAMES.get(s['plan'], s['plan']) + ' до ' + _fmt_t(s['sub_until']) if s['active'] else 'нет'}\n"
            f"Маскоты: {', '.join(own) or 'нет'}\nВыбран: {get_eq(u)}\nОплат: {paid[0]}"
            + (f"\nЗаморожена: осталось {fz / 86400:.1f} дн." if fz > 0 else "")
@@ -1605,6 +1764,7 @@ def user_card(chat_id, mid, tid: int, note: str = ""):
         [_b("Снять подписку", f"a:ur:{tid}"), _b("Маскоты", f"a:um:{tid}")],
         [_b("▶️ Разморозить", f"a:uth:{tid}") if fz > 0 else _b("❄️ Заморозить подписку", f"a:uf:{tid}")],
         [_b("✅ Разбанить", f"a:uu:{tid}") if ban is not None else _b("🚫 Забанить", f"a:ub:{tid}")],
+        [_b("🔄 Обновить", f"a:uc:{tid}"), _b("« К списку", "a:ul:0")],
         [_b("Другой ID", "a:u")] + BACK[0]])
 
 
@@ -1706,7 +1866,9 @@ def admin_callback(cq: dict):
             adm_stats(chat_id, mid)
         elif a == "u":
             adm_state[chat_id] = {"act": "user"}
-            adm_show(chat_id, mid, "Пришлите Telegram ID пользователя (число). Отмена: /cancel", BACK)
+            adm_show(chat_id, mid, "Пришлите Telegram ID (число) или @ник пользователя. Отмена: /cancel", BACK)
+        elif a == "ul":
+            user_list(chat_id, mid, int(p[2]) if len(p) > 2 else 0)
         elif a == "uc":
             user_card(chat_id, mid, int(p[2]))
         elif a == "ug":
@@ -1737,6 +1899,8 @@ def admin_callback(cq: dict):
             user_card(chat_id, mid, int(p[2]), "Подписка разморожена, дни вернулись" if ok else "Подписка не была заморожена")
         elif a == "bl":
             ban_list(chat_id, mid)
+        elif a == "sc":
+            sub_diag(chat_id, mid, frm)
         elif a == "um":
             mascot_menu(chat_id, mid, int(p[2]))
         elif a in ("ua", "ud") and p[2] in MASCOTS:
@@ -1828,12 +1992,8 @@ def admin_text(chat_id, frm, msg_id, cmd, arg, text) -> bool:
         return False
     act = st["act"]
     if act == "user":
-        m = re.search(r"\d{5,}", text)
-        if not m:
-            tg("sendMessage", chat_id=chat_id, text="Нужен числовой Telegram ID. Ещё раз или /cancel")
-            return True
         adm_state.pop(chat_id, None)
-        user_card(chat_id, None, int(m.group()))
+        user_find(chat_id, text)
     elif act == "price":
         n = re.findall(r"\d+", text)
         if len(n) != 2 or int(n[0]) < 1 or int(n[1]) < 1:
@@ -1931,6 +2091,10 @@ def handle_update(u: dict):
     if not chat_id or not frm or chat.get("type") != "private":
         return
     who = f"tg:{frm}"
+    try:
+        touch_tg(frm, ((msg.get("from") or {}).get("username") or "")[:40], ((msg.get("from") or {}).get("first_name") or "")[:40])
+    except Exception:  # noqa: BLE001
+        pass
     text = (msg.get("text") or msg.get("caption") or "").strip()
     cmd, _, arg = text.partition(" ")
     cmd = cmd.split("@")[0].lower() if cmd.startswith("/") else ""
@@ -2116,6 +2280,8 @@ def startup_report():
         w.append("нет ключа нейросети: чат пойдёт через бесплатный Pollinations, он нестабилен")
     if not REQUIRED_CHANNEL:
         w.append("обязательная подписка выключена: задайте REQUIRED_CHANNEL=@ваш_канал (бот должен быть админом канала)")
+    if REQUIRED_CHANNEL and SUB_FAIL_OPEN:
+        w.append("SUB_FAIL_OPEN=1: при сбое проверки подписки пускают всех. Уберите, если подписка обязательна")
     if not ADMIN_IDS and not ADMIN_PASSWORD:
         w.append("админка бота выключена: задайте ADMIN_IDS (ваш Telegram ID) и/или ADMIN_PASSWORD")
     if UNLIMITED:
